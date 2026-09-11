@@ -8,17 +8,19 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app import llm, telemetry, vault
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.discovery import tavily
 from app.discovery.extract import ExtractionError, extract_text
 from app.discovery.normalize import company_key, linkedin_profile_url, title_names_other_company, website_domain
@@ -83,17 +85,51 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class RunStopped(Exception):
+    """This run's row is no longer 'running' (e.g. marked stale by another process). Stop quietly."""
+
+
+HEARTBEAT_EVERY = timedelta(seconds=30)
+
+
 @dataclass
 class RunContext:
     db: Session
     run: Run
     resume: Resume
+    last_heartbeat: datetime | None = None
 
-    def emit(self, node: str, kind: str, message: str, data: dict | None = None) -> None:
+    def still_running(self) -> bool:
+        # no_autoflush: read the committed status, not this session's own unflushed changes.
+        with self.db.no_autoflush:
+            return self.db.scalar(select(Run.status).where(Run.id == self.run.id)) == RunStatus.running
+
+    def emit(self, node: str, kind: str, message: str, data: dict | None = None, *, final: bool = False) -> None:
+        # Every commit is guarded, so a run marked failed elsewhere can't keep writing candidates
+        # or flip itself back to completed. `final` events carry the status change themselves.
+        if not final and not self.still_running():
+            raise RunStopped()
         now = _now()
         self.db.add(RunEvent(run_id=self.run.id, node=node, kind=kind, message=message, data=data, created_at=now))
-        self.run.heartbeat_at = now
+        self.run.heartbeat_at = self.last_heartbeat = now
         self.db.commit()
+
+    def heartbeat(self) -> None:
+        now = _now()
+        if self.last_heartbeat and now - self.last_heartbeat < HEARTBEAT_EVERY:
+            return
+        if not self.still_running():
+            raise RunStopped()
+        # Own short transaction: it must be visible to other processes now, without committing this
+        # session's half-finished node work. The lock timeout means a missed beat, never a hang.
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+                conn.execute(Run.__table__.update().where(Run.id == self.run.id).values(heartbeat_at=now))
+        except OperationalError:
+            logger.warning("Heartbeat for run %s skipped (row busy)", self.run.id)
+            return
+        self.last_heartbeat = now
 
     def prompt(self, node: str) -> Prompt:
         prompt_id = (self.run.prompt_versions or {}).get(node)
@@ -327,6 +363,8 @@ def _wrap(ctx: RunContext, name: str, start_message: str, fn: Callable[[RunConte
             with telemetry.observation(name, as_type="chain", input={k: v for k, v in state.items() if k != "profile"}) as obs:
                 update, message, data = fn(ctx, state)
                 obs.update(output={"message": message, **(data or {})})
+        except RunStopped:
+            raise
         except (RunFailed, *EXPECTED_ERRORS) as exc:
             raise RunFailed(str(exc), name) from exc
         except Exception as exc:
@@ -355,15 +393,26 @@ def build_graph(ctx: RunContext):
 # --- execution -------------------------------------------------------------------
 
 def execute_run(db: Session, run_id: uuid.UUID) -> None:
-    run = db.get(Run, run_id)
-    if run is None or run.status != RunStatus.pending:
+    # Claim atomically: only one worker can move a run from pending to running.
+    now = _now()
+    claimed = db.execute(
+        Run.__table__.update()
+        .where(Run.id == run_id, Run.status == RunStatus.pending.name)
+        .values(status=RunStatus.running.name, started_at=now, heartbeat_at=now)
+    ).rowcount
+    db.commit()
+    if not claimed:
         return
-    ctx = RunContext(db, run, db.get(Resume, run.resume_id))
+    run = db.get(Run, run_id)
+    db.refresh(run)
+    ctx = RunContext(db, run, db.get(Resume, run.resume_id), last_heartbeat=now)
     client = telemetry.langfuse_client(db)
-    tel = telemetry.RunTelemetry(langfuse=client, on_notice=lambda msg: ctx.emit("agent", "info", msg))
+    tel = telemetry.RunTelemetry(
+        langfuse=client, on_notice=lambda msg: ctx.emit("agent", "info", msg), on_heartbeat=ctx.heartbeat,
+    )
 
     trace_id = telemetry.trace_id_for(str(run.id))
-    run.status, run.started_at = RunStatus.running, _now()
+    stopped = False
     if client is not None:
         run.langfuse_trace_id, run.langfuse_trace_url = trace_id, telemetry.trace_url(client, trace_id)
     ctx.emit(
@@ -384,8 +433,15 @@ def execute_run(db: Session, run_id: uuid.UUID) -> None:
             candidates = db.scalar(select(func.count()).select_from(Candidate).where(Candidate.run_id == run.id))
             summary = f"Done: {candidates} candidate(s) to review"
             root.update(output={"candidates": candidates})
+        if not ctx.still_running():
+            raise RunStopped()
         run.status = RunStatus.completed
-        ctx.emit("agent", "completed", summary)
+        ctx.emit("agent", "completed", summary, final=True)
+    except RunStopped:
+        # Someone else already ended this run (stale cleanup) and removed its candidates; leave it be.
+        db.rollback()
+        stopped = True
+        logger.warning("Discovery run %s was stopped elsewhere; worker exiting", run_id)
     except Exception as exc:  # noqa: BLE001 — every failure must end the run cleanly
         db.rollback()
         # Progress events commit as they go, so earlier steps' candidates are already saved. A failed
@@ -397,17 +453,30 @@ def execute_run(db: Session, run_id: uuid.UUID) -> None:
             logger.exception("Discovery run %s crashed outside a step", run_id)
             node, run.error = "agent", f"Unexpected error ({type(exc).__name__})"
         run.status = RunStatus.failed
-        ctx.emit(node, "failed", run.error)
+        ctx.emit(node, "failed", run.error, final=True)
     finally:
         run.usage = {k: round(v, 1) for k, v in tel.usage.items()}
-        run.finished_at = _now()
+        if not stopped:
+            run.finished_at = _now()
         db.commit()
         telemetry.flush(client)
 
 
 def run_in_background(run_id: uuid.UUID) -> None:
-    with SessionLocal() as db:
-        execute_run(db, run_id)
+    try:
+        with SessionLocal() as db:
+            execute_run(db, run_id)
+    except Exception:  # noqa: BLE001 — a pool thread has nobody to raise to
+        logger.exception("Discovery run %s crashed before it could record a failure", run_id)
+
+
+# Own pool, so minutes-long runs never occupy the web server's request threads. Extra runs queue
+# as 'pending'; a run queued past STALE_AFTER is failed by fail_stale_runs and skipped when reached.
+_run_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="discovery")
+
+
+def submit_run(run_id: uuid.UUID) -> None:
+    _run_pool.submit(run_in_background, run_id)
 
 
 def fail_stale_runs(db: Session) -> int:

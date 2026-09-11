@@ -25,6 +25,9 @@ class RunTelemetry:
     usage: dict[str, float] = field(default_factory=dict)
     langfuse: Langfuse | None = None
     on_notice: Callable[[str], None] | None = None  # e.g. "waiting 20s for Groq rate limit"
+    # Called before every external attempt (LLM, search, OCR page) so long retry loops still prove
+    # the run is alive; may raise to stop a run that was cancelled or marked stale elsewhere.
+    on_heartbeat: Callable[[], None] | None = None
 
     def add(self, key: str, amount: float = 1) -> None:
         self.usage[key] = self.usage.get(key, 0) + amount
@@ -46,6 +49,12 @@ def notice(message: str) -> None:
     telemetry = _current.get()
     if telemetry is not None and telemetry.on_notice is not None:
         telemetry.on_notice(message)
+
+
+def heartbeat() -> None:
+    telemetry = _current.get()
+    if telemetry is not None and telemetry.on_heartbeat is not None:
+        telemetry.on_heartbeat()
 
 
 @contextmanager

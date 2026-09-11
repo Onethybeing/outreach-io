@@ -1,8 +1,9 @@
+import asyncio
 import json
-import time
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,7 +24,6 @@ FINISHED = (RunStatus.completed, RunStatus.failed)
 @router.post("", response_model=RunOut, status_code=status.HTTP_202_ACCEPTED)
 def start_run(
     body: RunCreate,
-    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(require("runs.start")),
 ) -> Run:
@@ -67,7 +67,7 @@ def start_run(
     })
     db.commit()
     db.refresh(run)
-    background.add_task(discovery.run_in_background, run.id)
+    discovery.submit_run(run.id)
     return run
 
 
@@ -142,34 +142,39 @@ def stream_events(
 ) -> StreamingResponse:
     """Server-sent events for the live progress panel. Ends with an `end` event once the run finishes."""
 
-    def events():
+    async def events():
         last = max(after, last_event_id or 0)
         idle_polls = 0
         while True:
-            # A short-lived session per poll: the request's session is closed once streaming starts.
-            with SessionLocal() as db:
-                # Status first: the final event commits together with the status change, so any
-                # status we see as finished is guaranteed to have its events visible to the next read.
-                run_status = db.scalar(select(Run.status).where(Run.id == run_id))
-                batch = list(db.scalars(
-                    select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > last).order_by(RunEvent.id).limit(200)
-                ))
+            # Async generator: waiting between polls holds no thread; only the DB read borrows one.
+            run_status, batch = await run_in_threadpool(_poll, run_id, last)
             if run_status is None:
                 yield "event: error\ndata: {\"detail\": \"Run not found\"}\n\n"
                 return
-            for event in batch:
-                last = event.id
-                payload = RunEventOut.model_validate(event).model_dump(mode="json")
-                yield f"id: {event.id}\nevent: {event.kind}\ndata: {json.dumps(payload)}\n\n"
+            for payload in batch:
+                last = payload["id"]
+                yield f"id: {payload['id']}\nevent: {payload['kind']}\ndata: {json.dumps(payload)}\n\n"
             if run_status in FINISHED and not batch:
                 yield f"event: end\ndata: {json.dumps({'status': run_status.value})}\n\n"
                 return
             idle_polls = 0 if batch else idle_polls + 1
             if idle_polls and idle_polls % 15 == 0:
                 yield ": keepalive\n\n"
-            time.sleep(1)
+            await asyncio.sleep(1)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+def _poll(run_id: uuid.UUID, after: int) -> tuple[RunStatus | None, list[dict]]:
+    # A short-lived session per poll: the request's session is closed once streaming starts.
+    with SessionLocal() as db:
+        # Status first: the final event commits together with the status change, so a finished
+        # status guarantees its events are visible to the read that follows.
+        run_status = db.scalar(select(Run.status).where(Run.id == run_id))
+        events = db.scalars(
+            select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > after).order_by(RunEvent.id).limit(200)
+        )
+        return run_status, [RunEventOut.model_validate(e).model_dump(mode="json") for e in events]
 
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])

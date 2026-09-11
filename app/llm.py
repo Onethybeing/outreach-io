@@ -75,6 +75,7 @@ def complete(
         metadata=metadata,
     ) as obs:
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            telemetry.heartbeat()
             try:
                 response = httpx.post(
                     GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=120
@@ -92,6 +93,8 @@ def complete(
                 if response.status_code == 429:
                     telemetry.notice(f"Waiting {wait:.0f}s for the Groq rate limit")
                     telemetry.count("rate_limit_wait_seconds", wait)
+                else:
+                    telemetry.notice(f"Groq returned HTTP {response.status_code}, retrying in {wait:.0f}s")
                 time.sleep(wait)
                 continue
             if response.status_code != 200:

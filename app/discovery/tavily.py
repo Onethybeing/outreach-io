@@ -27,6 +27,7 @@ def search(
 
     with telemetry.observation("tavily_search", as_type="tool", input=body) as obs:
         for attempt in range(3):
+            telemetry.heartbeat()
             try:
                 response = httpx.post(
                     SEARCH_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=60

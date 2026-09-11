@@ -242,6 +242,43 @@ def test_failed_run_leaves_no_reviewable_candidates(db, resume, world, make_user
     assert all(c["run_id"] not in (str(run.id), str(in_progress.id)) for c in listed)
 
 
+def test_run_stopped_elsewhere_mid_run_does_not_resurrect(db, resume, world, monkeypatch):
+    run = _make_run(db, resume)
+    real = world.complete_json
+
+    def mark_failed_during_find_kdms(db_, model, prompt, temperature, max_tokens=4096, **kwargs):
+        if kwargs["name"] == "find_kdms":
+            # What fail_stale_runs in another process does, committed before this worker's next write.
+            db.execute(Run.__table__.update().where(Run.id == run.id).values(status="failed", error="Stopped elsewhere"))
+            db.commit()
+        return real(db_, model, prompt, temperature, max_tokens, **kwargs)
+
+    monkeypatch.setattr(llm, "complete_json", mark_failed_during_find_kdms)
+    graph.execute_run(db, run.id)
+    db.expire_all()
+    run = db.get(Run, run.id)
+    assert run.status == RunStatus.failed and run.error == "Stopped elsewhere"
+    assert db.scalars(select(Candidate).where(Candidate.run_id == run.id)).first() is None
+    assert ("agent", "completed") not in [(e.node, e.kind) for e in _events(db, run)]
+
+
+def test_heartbeat_is_throttled_and_stops_a_run_that_is_no_longer_running(db, resume):
+    run = _make_run(db, resume, status=RunStatus.running)
+    ctx = graph.RunContext(db, run, resume)
+    ctx.heartbeat()
+    first = ctx.last_heartbeat
+    ctx.heartbeat()  # within 30s → no new write
+    assert ctx.last_heartbeat == first
+
+    run.status = RunStatus.failed
+    db.commit()
+    ctx.last_heartbeat = None
+    with pytest.raises(graph.RunStopped):
+        ctx.heartbeat()
+    with pytest.raises(graph.RunStopped):
+        ctx.emit("find_kdms", "info", "should not be written")
+
+
 def test_database_allows_one_active_run_per_resume(db, resume):
     from sqlalchemy.exc import IntegrityError
 
@@ -294,7 +331,7 @@ def keys(db, make_user, fake_provider_test):
 @pytest.fixture
 def started(monkeypatch):
     calls = []
-    monkeypatch.setattr(graph, "run_in_background", lambda run_id: calls.append(run_id))
+    monkeypatch.setattr(graph, "submit_run", lambda run_id: calls.append(run_id))
     return calls
 
 
