@@ -24,6 +24,8 @@ TRACK_FOR_DAYS = 60
 LABELS = {label.value for label in ReplyClassification}
 BOUNCE_SENDERS = ("mailer-daemon@", "postmaster@")
 BOUNCE_SUBJECT = re.compile(r"undeliverable|delivery status notification|delivery (has )?failed|returned mail|failure notice", re.I)
+# "Delivery Status Notification (Delay)" comes from the same senders but the mail usually arrives later.
+DELAY_NOTICE = re.compile(r"\bdelay(ed)?\b|will (retry|keep trying)|temporar(y|ily)", re.I)
 OOO_SUBJECT = re.compile(r"out of (the )?office|automatic reply|auto(-|\s)?reply|away from (the )?office", re.I)
 
 _poll_lock = threading.Lock()
@@ -41,9 +43,14 @@ class PollSummary:
     errors: list[str] = field(default_factory=list)
 
 
-def classify(db: Session, message: gmail.GmailMessage, sent_text: str | None) -> tuple[ReplyClassification, str]:
-    """Cheap rules for unambiguous cases; the classify_reply prompt for everything else."""
+def classify(db: Session, message: gmail.GmailMessage, sent_text: str | None) -> tuple[ReplyClassification | None, str]:
+    """Cheap rules for unambiguous cases; the classify_reply prompt for everything else.
+
+    Returns (None, note) for delivery-delay notices: recorded, but not a response and not a bounce.
+    """
     if message.from_address.startswith(BOUNCE_SENDERS) or BOUNCE_SUBJECT.search(message.subject):
+        if DELAY_NOTICE.search(f"{message.subject} {message.snippet}"):
+            return None, "Delivery delayed (not a bounce; the mail may still arrive)"
         return ReplyClassification.bounce, "Delivery failure notice"
     if message.auto_submitted or OOO_SUBJECT.search(message.subject):
         return ReplyClassification.out_of_office, "Automatic reply"
@@ -73,13 +80,20 @@ def _candidate_message_ids(db: Session, contact: Contact) -> list[str]:
     ids = gmail.search(db, f"from:{contact.email} after:{after}")
     ids += gmail.search(db, f'from:(mailer-daemon OR postmaster) "{contact.email}" after:{after}')
     if contact.gmail_thread_id:
-        ids += gmail.thread_message_ids(db, contact.gmail_thread_id)
+        try:
+            ids += gmail.thread_message_ids(db, contact.gmail_thread_id)
+        except gmail.GmailNotFound:
+            pass  # thread deleted in Gmail; the searches above still find replies
     return list(dict.fromkeys(ids))
 
 
-def _apply(contact: Contact, label: ReplyClassification, received_at: datetime) -> None:
+def _apply(contact: Contact, label: ReplyClassification | None, received_at: datetime) -> None:
+    if label is None:
+        return
     if label == ReplyClassification.bounce:
-        contact.reply_status = ReplyStatus.bounced
+        # A human reply proves delivery, so a later/other delivery notice can't override it.
+        if contact.reply_status != ReplyStatus.replied:
+            contact.reply_status = ReplyStatus.bounced
     elif label in (ReplyClassification.reply, ReplyClassification.unsubscribe):
         contact.reply_status = ReplyStatus.replied
         contact.replied_at = min(contact.replied_at or received_at, received_at)
@@ -91,12 +105,19 @@ def _apply(contact: Contact, label: ReplyClassification, received_at: datetime) 
 
 def poll_contact(db: Session, contact: Contact, sender_address: str, summary: PollSummary) -> None:
     known = set(db.scalars(select(EmailEvent.gmail_message_id).where(EmailEvent.contact_id == contact.id)))
+    messages = []
     for message_id in _candidate_message_ids(db, contact):
         if message_id in known:
             continue
-        message = gmail.get_message(db, message_id)
-        if message.from_address == sender_address.lower():
-            continue  # our own message in the thread
+        try:
+            message = gmail.get_message(db, message_id)
+        except gmail.GmailNotFound:
+            continue  # deleted between search and fetch
+        if message.from_address != sender_address.lower():  # skip our own message in the thread
+            messages.append(message)
+
+    # Oldest first, so the contact's status reflects the real order of events.
+    for message in sorted(messages, key=lambda m: m.received_at):
         label, note = classify(db, message, contact.draft_text)
         db.add(EmailEvent(
             contact_id=contact.id, direction=EmailDirection.in_, gmail_message_id=message.id,
@@ -105,7 +126,8 @@ def poll_contact(db: Session, contact: Contact, sender_address: str, summary: Po
         ))
         _apply(contact, label, message.received_at)
         summary.new_messages += 1
-        summary.by_label[label.value] = summary.by_label.get(label.value, 0) + 1
+        key = label.value if label else "delivery_delayed"
+        summary.by_label[key] = summary.by_label.get(key, 0) + 1
     db.commit()
 
 
@@ -124,10 +146,13 @@ def poll_all(db: Session) -> PollSummary:
                 summary.contacts += 1
                 try:
                     poll_contact(db, contact, sender, summary)
-                except gmail.GmailError as exc:
+                except gmail.GmailAuthError as exc:
                     db.rollback()
                     summary.errors.append(str(exc))
-                    break  # sign-in/API problem applies to every contact
+                    break  # sign-in problem: every other contact would fail the same way
+                except gmail.GmailError as exc:
+                    db.rollback()
+                    summary.errors.append(f"{contact.name}: {exc}")  # e.g. a rate limit; retry next poll
                 except Exception as exc:  # noqa: BLE001 — one contact's odd message mustn't stop the rest
                     db.rollback()
                     logger.exception("Reply check failed for contact %s", contact.id)

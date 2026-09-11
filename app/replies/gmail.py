@@ -21,7 +21,15 @@ _token: tuple[tuple[str, str], str, float] | None = None  # (client_id, refresh_
 
 
 class GmailError(Exception):
-    pass
+    """One request failed (rate limit, server error). Other contacts can still be checked."""
+
+
+class GmailAuthError(GmailError):
+    """Sign-in expired or revoked: every request will fail, so stop."""
+
+
+class GmailNotFound(GmailError):
+    """The thread or message no longer exists (deleted) — skip it."""
 
 
 @dataclass
@@ -47,7 +55,7 @@ def _access_token(db: Session, force_refresh: bool = False) -> str:
         "refresh_token": creds["refresh_token"], "grant_type": "refresh_token",
     }, timeout=30)
     if response.status_code != 200:
-        raise GmailError("Gmail sign-in expired or was revoked — run scripts/gmail_auth.py again and update the vault")
+        raise GmailAuthError("Gmail sign-in expired or was revoked — run scripts/gmail_auth.py again and update the vault")
     body = response.json()
     _token = (key, body["access_token"], time.monotonic() + int(body.get("expires_in", 3600)))
     return _token[1]
@@ -63,10 +71,12 @@ def _get(db: Session, path: str, params: dict) -> dict:
             raise GmailError(f"Could not reach Gmail: {type(exc).__name__}")
         if response.status_code == 401 and attempt == 0:
             continue  # token expired early; refresh once
+        if response.status_code == 404:
+            raise GmailNotFound(f"Gmail item not found: {path}")
         if response.status_code != 200:
             raise GmailError(f"Gmail error (HTTP {response.status_code})")
         return response.json()
-    raise GmailError("Gmail kept rejecting the access token")
+    raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
 
 
 def search(db: Session, query: str, max_results: int = 20) -> list[str]:

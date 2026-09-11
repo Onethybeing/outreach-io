@@ -156,11 +156,68 @@ def test_dev_and_old_sends_are_not_tracked(db, sent_contact, inbox):
 
 def test_gmail_signin_problem_stops_poll_and_is_reported(db, sent_contact, inbox, monkeypatch):
     def expired(db_, query, max_results=20):
-        raise gmail.GmailError("Gmail sign-in expired or was revoked")
+        raise gmail.GmailAuthError("Gmail sign-in expired or was revoked")
 
     monkeypatch.setattr(gmail, "search", expired)
     summary = tracker.poll_all(db)
     assert summary.errors == ["Gmail sign-in expired or was revoked"] and summary.new_messages == 0
+
+
+def test_delay_notice_is_recorded_but_not_a_bounce(db, sent_contact, inbox):
+    inbox["messages"] = {"d1": _msg("d1", "mailer-daemon@googlemail.com", "Delivery Status Notification (Delay)",
+                                    body="Delivery incomplete. Gmail will retry for 46 more hours.")}
+    inbox["search"] = {"mailer-daemon": ["d1"]}
+    summary = tracker.poll_all(db)
+    db.refresh(sent_contact)
+    assert sent_contact.reply_status is None and summary.by_label == {"delivery_delayed": 1}
+    assert _events(db, sent_contact)[0].classification is None
+    assert tracker.poll_all(db).new_messages == 0  # stored, so not re-fetched
+
+
+def test_reply_wins_over_a_delivery_notice_in_the_same_poll(db, sent_contact, inbox):
+    inbox["messages"] = {
+        "r1": _msg("r1", "jane@acme.example", "Re: hello", minutes_after=5),
+        "b1": _msg("b1", "mailer-daemon@googlemail.com", "Undeliverable: hello", minutes_after=10),
+    }
+    inbox["search"] = {"from:jane@acme.example": ["r1"], "mailer-daemon": ["b1"]}
+    tracker.poll_all(db)
+    db.refresh(sent_contact)
+    assert sent_contact.reply_status == ReplyStatus.replied
+
+
+def test_deleted_thread_or_message_and_per_contact_errors_dont_stop_the_poll(db, sent_contact, inbox, monkeypatch):
+    # Second contact whose lookups hit a transient Gmail error.
+    other = Contact(
+        startup_id=sent_contact.startup_id, run_id=sent_contact.run_id, resume_id=sent_contact.resume_id,
+        cv_used_id=sent_contact.cv_used_id, name="Rate Limited", linkedin_url=f"https://www.linkedin.com/in/rl-{uuid.uuid4().hex[:8]}",
+        email="rl@acme.example", send_status=SendStatus.sent, sent_at=sent_contact.sent_at,
+    )
+    db.add(other)
+    db.commit()
+    inbox["messages"] = {"m1": _msg("m1", "jane@acme.example")}
+    inbox["search"] = {"from:jane@acme.example": ["m1", "gone"]}
+    real_search = gmail.search
+
+    def search(db_, query, max_results=20):
+        if "rl@acme.example" in query:
+            raise gmail.GmailError("Gmail error (HTTP 429)")
+        return real_search(db_, query, max_results)
+
+    def thread(db_, tid):
+        raise gmail.GmailNotFound("thread deleted")
+
+    def get_message(db_, mid):
+        if mid == "gone":
+            raise gmail.GmailNotFound("message deleted")
+        return inbox["messages"][mid]
+
+    monkeypatch.setattr(gmail, "search", search)
+    monkeypatch.setattr(gmail, "thread_message_ids", thread)
+    monkeypatch.setattr(gmail, "get_message", get_message)
+    summary = tracker.poll_all(db)
+    db.refresh(sent_contact)
+    assert sent_contact.reply_status == ReplyStatus.replied  # deleted thread/message skipped, reply still found
+    assert summary.contacts >= 2 and any("429" in e for e in summary.errors)
 
 
 def test_overlapping_polls_are_refused(db, sent_contact, inbox, make_user, login):
