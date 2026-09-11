@@ -81,7 +81,12 @@ export default function PrivacyPage() {
           Records are kept while the tool is in use and deleted on request. If you received an email from this tool and want
           your details removed, or you replied and want the conversation deleted, email{" "}
           <a className="underline" href="mailto:sourav.jhinjha@gmail.com">sourav.jhinjha@gmail.com</a>. The administrator
-          removes the records by hand, normally within 30 days.
+          removes the records by hand, normally within 30 days: the contact details, the record of the emails, and the stored
+          copies of the messages themselves.
+        </p>
+        <p>
+          One thing is deliberately kept: a one-way hash of your LinkedIn profile address, which cannot be turned back into
+          your name or your address. It is what stops a later search adding you again after you asked to be left alone.
         </p>
         <p>
           If you ask not to be contacted, your record is marked accordingly and no further email is sent to you. Replies that

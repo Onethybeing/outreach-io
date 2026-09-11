@@ -231,7 +231,9 @@ What each role can see and click is in §9.
   - **Approve draft** (row) + **Send all approved** (bulk).
   - Sub-tabs: **Active** (in progress), **Sent**, **No Email** (needs manual entry).
   - **Mark do not contact** (admin, operator) and **Erase this person** (admin) back the promises on
-    the public `/privacy` page: stop emailing on request, delete the record on request.
+    the public `/privacy` page: stop emailing on request, delete the record on request. Both write a
+    hashed LinkedIn URL to `contact_suppressions`, which outlives the contact row — later runs skip
+    those people and approving one is refused, so an erasure can't quietly undo an opt-out.
 - **Replies** — thread view per contact, reply classification, last message snippet.
 - **Settings** — Vault (§7), Prompts (§8), Users & Roles (§9), Mode (§6), Audit Log (§9).
 

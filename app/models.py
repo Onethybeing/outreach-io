@@ -398,6 +398,22 @@ class RunEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class ContactSuppression(Base):
+    """"Never contact this person" — outlives the contact row, so erasing can't undo an opt-out.
+
+    Only a hash of the LinkedIn URL is stored: enough to recognise them in a later run, not enough
+    to identify them (app/suppression.py).
+    """
+
+    __tablename__ = "contact_suppressions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    linkedin_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    reason: Mapped[str] = mapped_column(String(32))  # unsubscribe | do_not_contact | erased
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

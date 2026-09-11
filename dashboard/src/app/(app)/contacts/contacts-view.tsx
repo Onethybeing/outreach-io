@@ -340,13 +340,13 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
                 {can("contacts.act") && (
                   <>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => actions.doNotContact(c)}>
+                    <DropdownMenuItem onSelect={() => actions.doNotContact(c)} disabled={isBusy(c)}>
                       {c.do_not_contact ? "Allow contact again" : "Mark do not contact"}
                     </DropdownMenuItem>
                   </>
                 )}
                 {can("contacts.delete") && (
-                  <DropdownMenuItem className="text-destructive" onSelect={() => actions.erase(c)}>
+                  <DropdownMenuItem className="text-destructive" onSelect={() => actions.erase(c)} disabled={isBusy(c)}>
                     Erase this person…
                   </DropdownMenuItem>
                 )}

@@ -115,6 +115,8 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
         telemetry.flush(client)
 
     contact = db.get(Contact, contact_id, with_for_update=True)
+    if contact is None:  # erased while the model was writing
+        raise ActionError(404, "Contact not found")
     _check_can_draft(contact, force)  # state may have changed while the model was writing
     contact.draft_subject, contact.draft_text = state["subject"], state["body"]
     contact.draft_prompt_version_id = uuid.UUID(state["prompt_id"])

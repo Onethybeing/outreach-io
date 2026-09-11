@@ -342,9 +342,17 @@ def dedupe_against_db(ctx: RunContext, state: State) -> NodeResult:
     earlier = set(ctx.db.scalars(
         select(Candidate.linkedin_url).where(Candidate.linkedin_url.in_(urls), Candidate.run_id != ctx.run.id)
     ))
-    for candidate in candidates:
+    # People who unsubscribed, were marked do-not-contact or asked to be erased never come back.
+    blocked = suppression.suppressed(ctx.db, urls)
+    for candidate in list(candidates):
+        if candidate.linkedin_url in blocked:
+            ctx.db.delete(candidate)
+            candidates.remove(candidate)
+            continue
         candidate.existing_contact_id = existing.get(candidate.linkedin_url)
     message = f"{len(candidates)} candidates ready for review, {len(existing)} already in contacts"
+    if blocked:
+        message += f", {len(blocked)} skipped (asked not to be contacted)"
     if earlier:
         message += f", {len(earlier)} also proposed in earlier runs"
     return {}, message, {"candidates": len(candidates), "existing_contacts": len(existing), "proposed_before": len(earlier)}

@@ -4,7 +4,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app import llm, telemetry
+from app import llm, suppression, telemetry
 from app.contacts import apollo, brightdata, service, verification
 from app.contacts.brightdata import Profile
 from app.models import (
@@ -12,6 +12,7 @@ from app.models import (
     Run, RunStatus, SendStatus, Startup, UserRole, VerificationStatus,
 )
 from app.routers import contacts as contacts_router
+from app.storage import get_storage
 
 POWERFUL = Profile(
     name="Simon", current_company="Powerful Medical", current_company_slug="powerful-medical",
@@ -339,6 +340,42 @@ def test_erase_removes_the_person_and_their_emails(db, world, operator, make_use
     assert decided.status == CandidateStatus.approved and decided.contact_id is None
     erasure = db.scalar(select(AuditLog).where(AuditLog.action == "contacts.erase"))
     assert erasure is not None and "name" not in (erasure.details or {})
+
+
+def test_erase_blocks_future_contact_and_scrubs_the_candidate(db, world, operator, make_user, login):
+    candidate = world["candidates"][0]
+    url = candidate.linkedin_url
+    contact_id = uuid.UUID(_approve(operator, candidate)["id"])
+    assert login(make_user(UserRole.admin)).delete(f"/contacts/{contact_id}").status_code == 204
+    db.expire_all()
+
+    scrubbed = db.get(Candidate, candidate.id)
+    assert scrubbed.name == "(erased)" and scrubbed.linkedin_url.startswith("erased:")
+    assert suppression.is_suppressed(db, url)
+
+    # The same person found again in a later run can't be approved back in.
+    again = Candidate(run_id=world["run"].id, startup_id=world["startup"].id, name="Person 0", linkedin_url=url)
+    db.add(again)
+    db.commit()
+    assert operator.post(f"/candidates/{again.id}/approve").status_code == 409
+    db.expire_all()
+    assert db.get(Candidate, again.id).status == CandidateStatus.rejected
+
+
+def test_erase_removes_the_dev_email_file(db, world, operator, make_user, login):
+    contact_id = uuid.UUID(_approve(operator, world["candidates"][0])["id"])
+    key = f"outbox/20260912T101500-{contact_id}.eml"
+    get_storage().save(key, b"From: me", "message/rfc822")
+    assert login(make_user(UserRole.admin)).delete(f"/contacts/{contact_id}").status_code == 204
+    assert not get_storage().exists(key)
+
+
+def test_in_flight_send_delays_do_not_contact_and_erase(db, world, operator, make_user, login):
+    contact_id = uuid.UUID(_approve(operator, world["candidates"][0])["id"])
+    db.get(Contact, contact_id).send_status = SendStatus.queued
+    db.commit()
+    assert operator.put(f"/contacts/{contact_id}/do-not-contact", json={"do_not_contact": True}).status_code == 409
+    assert login(make_user(UserRole.admin)).delete(f"/contacts/{contact_id}").status_code == 409
 
 
 def test_do_not_contact_blocks_lookup(db, world, operator):

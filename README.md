@@ -44,6 +44,11 @@ email lookup.
 | `POST /contacts/email/lookup-bulk` `{dry_run, contact_ids?}` | Count (dry run) or start lookups for all eligible | admin, operator |
 | `PUT /contacts/{id}/do-not-contact` `{do_not_contact}` | Honour (or undo) a request not to be emailed | admin, operator |
 | `DELETE /contacts/{id}` | Erase a person's record and email history (deletion request) | admin |
+
+Marking do-not-contact, an unsubscribe reply, and erasing all record a hash of the LinkedIn URL in
+`contact_suppressions`. Later runs drop those people, and approving one is refused — so an erasure
+can't quietly undo an opt-out. Erasing also scrubs the candidate rows that named the person and
+deletes their dev `.eml` copies from storage.
 | `GET /settings`, `PUT /settings/email-provider` | Mode and email provider (change: admin) | all / admin |
 
 Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
