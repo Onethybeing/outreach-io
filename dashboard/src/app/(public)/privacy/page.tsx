@@ -34,9 +34,9 @@ export default function PrivacyPage() {
             <strong>CVs you upload</strong> — the file and the text extracted from it.
           </li>
           <li>
-            <strong>Business contact details</strong> — names, job titles, employers, LinkedIn profile links and work email
-            addresses of people at the companies being contacted, collected from search results and from Apollo and
-            Bright Data.
+            <strong>Business contact details</strong> — names, job titles, employers and LinkedIn profile links of people at
+            the companies being contacted, found through web search and checked against Bright Data and Apollo. Work email
+            addresses come from Apollo, or an operator types in an address they already had.
           </li>
           <li>
             <strong>Emails</strong> — the drafts written in the app, and the sent and received messages in the connected
@@ -56,8 +56,11 @@ export default function PrivacyPage() {
           <a className="underline" href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">
             Google API Services User Data Policy
           </a>
-          , including the Limited Use requirements. Gmail data is used solely to send the outreach emails you approve and to
-          detect replies to them. It is never sold, never used for advertising, and never used to train any AI model.
+          , including the Limited Use requirements. Gmail data is used only to send the outreach emails an operator approves
+          and to track answers to them. To do that, the text of an incoming reply is sent to Groq, which labels it as a reply,
+          a bounce, an out-of-office note or an unsubscribe request, and a record of that call is kept in Langfuse. Both act
+          only on instructions from this app. Gmail data is never sold, never used for advertising, never used to train any AI
+          model, and is not shared with anyone else.
         </p>
       </Section>
 
@@ -77,8 +80,12 @@ export default function PrivacyPage() {
         <p>
           Records are kept while the tool is in use and deleted on request. If you received an email from this tool and want
           your details removed, or you replied and want the conversation deleted, email{" "}
-          <a className="underline" href="mailto:sourav.jhinjha@gmail.com">sourav.jhinjha@gmail.com</a> and it will be removed,
-          normally within 30 days. Asking not to be contacted is honoured immediately and permanently.
+          <a className="underline" href="mailto:sourav.jhinjha@gmail.com">sourav.jhinjha@gmail.com</a>. The administrator
+          removes the records by hand, normally within 30 days.
+        </p>
+        <p>
+          If you ask not to be contacted, your record is marked accordingly and no further email is sent to you. Replies that
+          read as an unsubscribe request are detected automatically and set the same mark without anyone having to act.
         </p>
       </Section>
 
