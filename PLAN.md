@@ -194,6 +194,13 @@ same person across separate resume runs.
 
 ## 5. Dashboard
 
+**Built (Phase 6)** in `dashboard/` — Next.js 16 (App Router) + shadcn/ui + TanStack Table, deployed
+to Cloud Run. The browser only talks to the dashboard: Next.js forwards `/api/*` and `/auth/*` to the
+API, so the session cookie stays same-origin and sign-in starts and ends on the dashboard's URL.
+Buttons follow the signed-in role, and the API still checks every action. The live run feed needs
+`Cache-Control: no-transform` on the SSE response — without it the proxy gzips the stream and holds
+every event until the run ends.
+
 **Top-level tabs:** Stats · Library · Run Agent · Candidates · Contacts (Active / Sent / No-Email) ·
 Replies · Settings (Vault / Prompts / Users & Roles / Mode / Audit Log)
 
@@ -410,7 +417,8 @@ background jobs run in-process. Deploy with `bash scripts/deploy.sh`; migrations
 - FastAPI + LangGraph runtime → **Cloud Run**. Discovery runs execute in the background after the
   request returns, so the service needs **CPU always allocated** (otherwise Cloud Run throttles it
   and runs stall), or runs move to Cloud Tasks / Cloud Run Jobs.
-- Dashboard → **Cloud Run**
+- Dashboard → **Cloud Run** (service `outreach-dashboard`, same region; `bash scripts/deploy_dashboard.sh`,
+  which also points the API's `PUBLIC_BASE_URL` at the dashboard so Google sign-in lands there)
 - Bootstrap secrets (`DATABASE_URL`, `VAULT_MASTER_KEY`, session secret, login OAuth client) →
   **Secret Manager**
   (provider API keys live in the vault, §7)
@@ -510,8 +518,9 @@ background jobs run in-process. Deploy with `bash scripts/deploy.sh`; migrations
 4. ✅ Candidate approve / reject / reuse / update → contacts; verification (Apollo company page +
    BrightData profile + LLM tie-break); provider-agnostic email lookup; manual email.
 5. ✅ Draft generation (single + bulk), edit, approve; dev-mode send (`.eml` with CV attached, single + bulk).
-6. Dashboard: Library, Run Agent, Candidates, Contacts, Settings (Vault / Prompts / Users / Mode /
-   Audit Log).
+6. ✅ Dashboard (`dashboard/`, Next.js 16 + shadcn/ui): Stats, Library, Run Agent (live SSE),
+   Candidates, Contacts, Replies, Settings (Vault / Prompts / Users / Mode / Audit Log), deployed to
+   Cloud Run as `outreach-dashboard`.
 7. ✅ Reply tracking + classification (backend: `POST /replies/poll`, `GET /replies`, scheduler endpoint
    `POST /internal/poll-replies` with `INTERNAL_TASK_TOKEN`). Replies tab comes with the dashboard.
 8. ✅ Stats (`GET /stats`, cached 60s) + Langfuse eval scoring (backend). Stats tab comes with the dashboard.
