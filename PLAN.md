@@ -148,7 +148,8 @@ prompts(id, node_name, version, template, required_variables jsonb, model, tempe
 
 audit_log(id, user_id -> users.id, action, target_type, target_id, details jsonb, created_at)
 
-contacts  + draft_prompt_version_id -> prompts.id, approved_by, draft_approved_by, sent_by
+contacts  + draft_prompt_version_id -> prompts.id, approved_by, draft_approved_by, sent_by,
+            do_not_contact bool default false   -- set on unsubscribe, blocks all sends
 runs      + started_by -> users.id, prompt_versions jsonb   -- snapshot of active prompt ids at run start
 email_events + classification enum(reply, bounce, out_of_office, unsubscribe)
 ```
@@ -211,8 +212,10 @@ What each role can see and click is in §9.
 exposed again after it's saved.
 
 - **Only bootstrap secrets stay in env / GCP Secret Manager:** `DATABASE_URL`,
-  `VAULT_MASTER_KEY`, auth/session secret, `INITIAL_ADMIN_EMAIL`. Everything else (Groq, Tavily,
-  BrightData, Apollo, Gmail OAuth, Langfuse) lives in the `api_credentials` table.
+  `VAULT_MASTER_KEY`, auth/session secret, the Google sign-in OAuth client ID/secret used for
+  dashboard login (§9), `INITIAL_ADMIN_EMAIL`. Login must not depend on the vault, or a bad vault
+  entry would lock the admin out of the page needed to fix it. Everything else (Groq, Tavily,
+  BrightData, Apollo, Gmail sending OAuth, Langfuse) lives in the `api_credentials` table.
 - **Encryption:** each key is encrypted with the master key (Fernet / AES from the `cryptography`
   package) before it's written. The database only ever holds ciphertext + the last 4 characters.
 - **Write-only:** after saving, the API never returns the full key — the UI shows
@@ -345,7 +348,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 
 - FastAPI + LangGraph runtime → **Cloud Run**
 - Dashboard → **Cloud Run**
-- Bootstrap secrets (`DATABASE_URL`, `VAULT_MASTER_KEY`, session secret) → **Secret Manager**
+- Bootstrap secrets (`DATABASE_URL`, `VAULT_MASTER_KEY`, session secret, login OAuth client) →
+  **Secret Manager**
   (provider API keys live in the vault, §7)
 - Reply polling → **Cloud Scheduler** hitting an internal endpoint
 - Nightly `pg_dump` → **GCS** bucket
@@ -373,13 +377,15 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 4. Manual email entered → `email_source = manual`, Apollo skipped unless explicitly re-run.
 5. KDM left the company → filtered out before becoming actionable, logged for audit.
 6. Metered APIs → bulk buttons show a cost estimate and skip already-processed contacts.
-7. Draft blocked until employment verified; send blocked until draft approved; re-send blocked
-   unless forced.
+7. Draft blocked until employment is verified or the email was entered manually (manual entry is
+   the user vouching for the contact); send blocked until draft approved; re-send blocked unless
+   forced.
 8. Dev mode never touches the Gmail send API; prod needs admin toggle + explicit confirm.
 9. Which CV was used is tracked per contact (`cv_used_id`) and shown in the table.
 10. Idempotent writes (upserts on unique constraints) so retries never duplicate rows or emails.
 11. Replies classified — bounces, out-of-office and unsubscribe requests don't count as replies;
-    an unsubscribe request blocks any future send to that contact.
+    an unsubscribe request sets `contacts.do_not_contact = true`, which `send_email` checks and
+    which "Update (re-verify)" never resets.
 12. Resumes and emails are PII — bootstrap secrets in Secret Manager, provider keys encrypted in
     the vault, nothing secret in the repo.
 13. Text-layer PDFs parsed cheaply first; vision OCR only when text extraction fails.
