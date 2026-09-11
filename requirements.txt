@@ -1,0 +1,20 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.2
+pydantic>=2.9
+pydantic-settings>=2.6
+python-dotenv>=1.0
+python-multipart>=0.0.12
+
+# agent / LLM stack (Phase 2+, listed now so scaffold installs cleanly)
+langgraph>=0.2
+langchain-anthropic>=0.3
+anthropic>=0.40
+tavily-python>=0.5
+langfuse>=2.53
+
+# resume parsing
+pdfplumber>=0.11
+python-docx>=1.1

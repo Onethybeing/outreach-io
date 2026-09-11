@@ -2,9 +2,11 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 *.egg-info/
 venv/
 .venv/
+storage/
 node_modules/
 .next/
 dist/
