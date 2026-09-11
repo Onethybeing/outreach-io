@@ -14,7 +14,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app import llm, telemetry, vault
@@ -152,9 +152,11 @@ def build_search_queries(ctx: RunContext, state: State) -> NodeResult:
 
 
 def _previous_startups(ctx: RunContext) -> list[Startup]:
+    # Only completed runs: a failed run never proposed people for its startups, so a retry must
+    # be allowed to pick them again.
     return list(ctx.db.scalars(
         select(Startup).join(Run, Startup.run_id == Run.id)
-        .where(Run.resume_id == ctx.resume.id, Run.id != ctx.run.id)
+        .where(Run.resume_id == ctx.resume.id, Run.id != ctx.run.id, Run.status == RunStatus.completed)
     ))
 
 
@@ -386,6 +388,9 @@ def execute_run(db: Session, run_id: uuid.UUID) -> None:
         ctx.emit("agent", "completed", summary)
     except Exception as exc:  # noqa: BLE001 — every failure must end the run cleanly
         db.rollback()
+        # Progress events commit as they go, so earlier steps' candidates are already saved. A failed
+        # run's partial list must not be reviewable/approvable; startups stay for the record.
+        db.execute(delete(Candidate).where(Candidate.run_id == run.id))
         if isinstance(exc, RunFailed):
             node, run.error = exc.node, str(exc)
         else:
@@ -417,6 +422,7 @@ def fail_stale_runs(db: Session) -> int:
             continue
         run.status, run.finished_at = RunStatus.failed, _now()
         run.error = "Stopped: the server restarted or the run stopped responding"
+        db.execute(delete(Candidate).where(Candidate.run_id == run.id))
         db.add(RunEvent(run_id=run.id, node="agent", kind="failed", message=run.error, created_at=_now()))
         count += 1
     db.commit()

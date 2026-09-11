@@ -42,10 +42,15 @@ _GENERIC_SUFFIXES = {
 
 
 def _same_company(named: str, target: str) -> bool:
-    if named == target or named in target:  # title uses a shorter form: 'Multiverse' for 'Multiverse Computing'
+    """Equal, or one name is the other plus a generic tail, in either direction.
+
+    'Multiverse' ~ 'Multiverse Computing', 'Hippocratic AI' ~ 'Hippocratic' — but not
+    'Sapling Says' ~ 'Sapling', 'Meta' ~ 'Metaview', 'Scale' ~ 'Upscale'.
+    """
+    if named == target:
         return True
-    # Title uses a longer form: only a generic tail counts ('Hippocratic AI' yes, 'Sapling Says' no).
-    return named.startswith(target) and named[len(target):] in _GENERIC_SUFFIXES
+    shorter, longer = sorted((named, target), key=len)
+    return longer.startswith(shorter) and longer[len(shorter):] in _GENERIC_SUFFIXES
 
 
 def title_names_other_company(title: str | None, startup_name: str, website: str | None = None) -> bool:

@@ -131,6 +131,14 @@ class Resume(Base):
 
 class Run(Base):
     __tablename__ = "runs"
+    __table_args__ = (
+        Index(
+            "uq_runs_one_active_per_resume",
+            "resume_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     resume_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("resumes.id"))

@@ -60,6 +60,8 @@ class FakeWorld:
             {"name": "", "relevance": 1.0},
         ]
         self.fail_on: str | None = None
+        self.fail_kdms_on_call: int | None = None
+        self.kdm_calls = 0
 
     def search(self, db, query, max_results=5, include_domains=None, content_chars=400):
         self.searches.append(query)
@@ -86,6 +88,9 @@ class FakeWorld:
         if name == "discover_startups":
             return {"startups": self.startups}
         if name == "find_kdms":
+            self.kdm_calls += 1
+            if self.kdm_calls == self.fail_kdms_on_call:
+                raise llm.LLMError("Groq error: failed on a later startup")
             if "Acme" in prompt:
                 return {"people": [
                     {"name": "Other", "title": "CEO at Acme Vectorless", "linkedin_url": "https://www.linkedin.com/in/lookalike"},
@@ -207,6 +212,45 @@ def test_no_startups_ends_early_without_failing(db, resume, world):
     assert "find_kdms" not in world.llm_calls
 
 
+def test_startups_from_failed_earlier_runs_can_be_picked_again(db, resume, world):
+    earlier = _make_run(db, resume, status=RunStatus.failed)
+    db.add(Startup(run_id=earlier.id, name="Old Co", website="https://oldco.example"))
+    db.commit()
+    run = _make_run(db, resume, num_startups=3)
+    graph.execute_run(db, run.id)
+    names = {s.name for s in db.scalars(select(Startup).where(Startup.run_id == run.id))}
+    assert "Old Co" in names
+
+
+def test_failed_run_leaves_no_reviewable_candidates(db, resume, world, make_user, login):
+    world.fail_kdms_on_call = 2  # first startup's candidates get committed, then the second fails
+    run = _make_run(db, resume)
+    graph.execute_run(db, run.id)
+    db.refresh(run)
+    assert run.status == RunStatus.failed
+    assert any("decision-maker(s) at Acme Vector" in e.message for e in _events(db, run))  # step 1 did save
+    assert db.scalars(select(Candidate).where(Candidate.run_id == run.id)).first() is None
+
+    in_progress = _make_run(db, resume, status=RunStatus.running)
+    startup = Startup(run_id=in_progress.id, name="Live Co")
+    db.add(startup)
+    db.flush()
+    db.add(Candidate(run_id=in_progress.id, startup_id=startup.id, name="Mid Run",
+                     linkedin_url="https://www.linkedin.com/in/mid-run"))
+    db.commit()
+    listed = login(make_user(UserRole.viewer)).get("/candidates").json()
+    assert all(c["run_id"] not in (str(run.id), str(in_progress.id)) for c in listed)
+
+
+def test_database_allows_one_active_run_per_resume(db, resume):
+    from sqlalchemy.exc import IntegrityError
+
+    _make_run(db, resume, status=RunStatus.pending)
+    with pytest.raises(IntegrityError):
+        _make_run(db, resume, status=RunStatus.running)
+    db.rollback()
+
+
 def test_run_only_executes_once(db, resume, world):
     run = _make_run(db, resume)
     graph.execute_run(db, run.id)
@@ -216,9 +260,12 @@ def test_run_only_executes_once(db, resume, world):
 
 
 def test_stale_running_run_is_failed_recent_one_kept(db, resume):
+    other_resume = Resume(filename="other.pdf", storage_path="x.pdf")
+    db.add(other_resume)
+    db.commit()
     old = _make_run(db, resume, status=RunStatus.running)
     old.heartbeat_at = datetime.now(timezone.utc) - timedelta(minutes=30)
-    fresh = _make_run(db, resume, status=RunStatus.running)
+    fresh = _make_run(db, other_resume, status=RunStatus.running)
     fresh.heartbeat_at = datetime.now(timezone.utc)
     db.commit()
     assert graph.fail_stale_runs(db) >= 1
@@ -326,6 +373,9 @@ def test_linkedin_normalization(url, expected):
     ("CTO at Acme Robotics", "Acme", "https://acmerobotics.com", False),
     ("Head of Talent", "Acme", None, False),
     (None, "Acme", None, False),
+    ("Head of Talent at Scale", "Upscale", None, True),  # substring in the middle is not a match
+    ("Engineer at Meta", "Metaview", None, True),  # prefix with a non-generic tail is not a match
+    ("Recruiter at Hippocratic", "Hippocratic AI", None, False),
 ])
 def test_title_names_other_company(title, startup, website, other):
     assert title_names_other_company(title, startup, website) is other

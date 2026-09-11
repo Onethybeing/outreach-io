@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, prompts, vault
@@ -55,7 +56,12 @@ def start_run(
         prompt_versions={node: str(active[node].id) for node in discovery.PROMPT_NODES},
     )
     db.add(run)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # The check above can race with a simultaneous request; the partial unique index can't.
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "A run for this resume is already in progress")
     audit.record(db, user, "runs.start", "run", run.id, {
         "resume_id": str(resume.id), "num_startups": run.num_startups, "num_kdms": run.num_kdms_per_company,
     })
@@ -142,10 +148,12 @@ def stream_events(
         while True:
             # A short-lived session per poll: the request's session is closed once streaming starts.
             with SessionLocal() as db:
+                # Status first: the final event commits together with the status change, so any
+                # status we see as finished is guaranteed to have its events visible to the next read.
+                run_status = db.scalar(select(Run.status).where(Run.id == run_id))
                 batch = list(db.scalars(
                     select(RunEvent).where(RunEvent.run_id == run_id, RunEvent.id > last).order_by(RunEvent.id).limit(200)
                 ))
-                run_status = db.scalar(select(Run.status).where(Run.id == run_id))
             if run_status is None:
                 yield "event: error\ndata: {\"detail\": \"Run not found\"}\n\n"
                 return
@@ -174,7 +182,8 @@ def list_candidates(
     db: Session = Depends(get_db),
     _: User = Depends(require("dashboard.view")),
 ) -> list[CandidateOut]:
-    conditions = []
+    # Only completed runs: an in-progress run's list is still growing, and a failed run's is deleted.
+    conditions = [Run.status == RunStatus.completed]
     if status_filter:
         conditions.append(Candidate.status == status_filter)
     if run_id:
