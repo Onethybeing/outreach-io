@@ -61,6 +61,14 @@ Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §
 
 No real email is sent: prod mode refuses until real sending is explicitly approved.
 
+**Phase 7** — reply tracking (`app/replies/`).
+
+| Route | What | Who |
+|---|---|---|
+| `POST /replies/poll` | Check Gmail now for replies, bounces, out-of-office, unsubscribes | admin, operator |
+| `GET /replies?classification=` | Inbound messages with contact, startup and reply status | all roles |
+| `POST /internal/poll-replies` + `X-Internal-Token` | Same check, for Cloud Scheduler; off unless `INTERNAL_TASK_TOKEN` is set | scheduler |
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).
