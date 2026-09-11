@@ -5,7 +5,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, select, true
+from sqlalchemy import and_, delete, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,8 +14,8 @@ from app.contacts import apollo
 from app.db import SessionLocal
 from app.jobs import WorkerPool
 from app.models import (
-    AppSetting, Candidate, CandidateStatus, Contact, DraftStatus, EmailLookupStatus, Run, RunStatus,
-    SendStatus, Startup, User, VerificationStatus,
+    AppSetting, Candidate, CandidateStatus, Contact, DraftStatus, EmailEvent, EmailLookupStatus, Run,
+    RunStatus, SendStatus, Startup, User, VerificationStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -248,6 +248,45 @@ def set_manual_email(db: Session, contact_id: uuid.UUID, email: str, user: User)
     audit.record(db, user, "contacts.manual_email", "contact", contact.id)
     db.commit()
     return contact
+
+
+# --- do-not-contact and erasure -------------------------------------------------------
+# The privacy policy promises both: someone can ask not to be emailed, or to have their record removed.
+
+def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: User) -> Contact:
+    contact = _contact(db, contact_id, lock=True)
+    contact.do_not_contact = value
+    audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
+    db.commit()
+    return contact
+
+
+def erase_contact(db: Session, contact_id: uuid.UUID, user: User) -> None:
+    """Delete the person's record and their email history.
+
+    Candidates that led to this contact stay (they belong to a run) but lose the link, so no row
+    points at a deleted person. The audit entry deliberately keeps no name or address.
+    """
+    contact = _contact(db, contact_id, lock=True)
+    if contact.email_lookup_status == EmailLookupStatus.running:
+        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+    if contact.verification_status in (VerificationStatus.queued, VerificationStatus.running):
+        raise ActionError(409, "This contact is being verified right now — try again when it finishes")
+
+    db.execute(delete(EmailEvent).where(EmailEvent.contact_id == contact.id))
+    db.execute(
+        update(Candidate).where(Candidate.contact_id == contact.id).values(contact_id=None)
+    )
+    db.execute(
+        update(Candidate).where(Candidate.existing_contact_id == contact.id).values(existing_contact_id=None)
+    )
+    db.execute(
+        update(Contact).where(Contact.is_duplicate_of_contact_id == contact.id).values(is_duplicate_of_contact_id=None)
+    )
+    details = {"had_email": bool(contact.email), "was_sent": contact.send_status in SENT}  # read before the delete
+    db.delete(contact)
+    audit.record(db, user, "contacts.erase", "contact", contact_id, details)
+    db.commit()
 
 
 def bulk_lookup_eligible(db: Session, contact_ids: list[uuid.UUID] | None = None) -> list[uuid.UUID]:

@@ -286,6 +286,10 @@ class ManualEmailIn(BaseModel):
     email: str
 
 
+class DoNotContactIn(BaseModel):
+    do_not_contact: bool
+
+
 class BulkLookupIn(BaseModel):
     dry_run: bool = True
     contact_ids: list[uuid.UUID] | None = None

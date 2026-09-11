@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,8 @@ from app.db import get_db
 from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
     BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn, BulkLookupOut,
-    CandidateDecisionOut, ContactOut, DraftEditIn, EmailEventOut, EmailProviderIn, ManualEmailIn, SettingsOut,
+    CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut, EmailProviderIn,
+    ManualEmailIn, SettingsOut,
 )
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -148,6 +149,23 @@ def set_email(
 ):
     service.set_manual_email(db, contact_id, body.email, user)
     return contact_out(db, contact_id)
+
+
+@contacts_router.put("/{contact_id}/do-not-contact", response_model=ContactOut)
+def set_do_not_contact(
+    contact_id: uuid.UUID, body: DoNotContactIn,
+    db: Session = Depends(get_db), user: User = Depends(require("contacts.act")),
+):
+    """Honour (or undo) a request not to be emailed. Sending and lookups refuse while it is set."""
+    service.set_do_not_contact(db, contact_id, body.do_not_contact, user)
+    return contact_out(db, contact_id)
+
+
+@contacts_router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+def erase_contact(contact_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require("contacts.delete"))):
+    """Erase a person's record and email history, for a deletion request. Not undoable."""
+    service.erase_contact(db, contact_id, user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @contacts_router.post("/email/lookup-bulk", response_model=BulkLookupOut)

@@ -230,6 +230,8 @@ What each role can see and click is in §9.
   - Draft dropdown/expander per row with the full AI email, editable before approval.
   - **Approve draft** (row) + **Send all approved** (bulk).
   - Sub-tabs: **Active** (in progress), **Sent**, **No Email** (needs manual entry).
+  - **Mark do not contact** (admin, operator) and **Erase this person** (admin) back the promises on
+    the public `/privacy` page: stop emailing on request, delete the record on request.
 - **Replies** — thread view per contact, reply classification, last message snippet.
 - **Settings** — Vault (§7), Prompts (§8), Users & Roles (§9), Mode (§6), Audit Log (§9).
 

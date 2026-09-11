@@ -42,6 +42,8 @@ email lookup.
 | `POST /contacts/{id}/email/lookup?force=` | Find the email now (skips done/unverified unless forced) | admin, operator |
 | `PUT /contacts/{id}/email` `{email}` | Enter an email manually | admin, operator |
 | `POST /contacts/email/lookup-bulk` `{dry_run, contact_ids?}` | Count (dry run) or start lookups for all eligible | admin, operator |
+| `PUT /contacts/{id}/do-not-contact` `{do_not_contact}` | Honour (or undo) a request not to be emailed | admin, operator |
+| `DELETE /contacts/{id}` | Erase a person's record and email history (deletion request) | admin |
 | `GET /settings`, `PUT /settings/email-provider` | Mode and email provider (change: admin) | all / admin |
 
 Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.

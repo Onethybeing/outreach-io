@@ -8,8 +8,8 @@ from app import llm, telemetry
 from app.contacts import apollo, brightdata, service, verification
 from app.contacts.brightdata import Profile
 from app.models import (
-    AuditLog, Candidate, CandidateStatus, Contact, EmailLookupStatus, Resume, Run, RunStatus, SendStatus,
-    Startup, UserRole, VerificationStatus,
+    AuditLog, Candidate, CandidateStatus, Contact, EmailDirection, EmailEvent, EmailLookupStatus, Resume,
+    Run, RunStatus, SendStatus, Startup, UserRole, VerificationStatus,
 )
 from app.routers import contacts as contacts_router
 
@@ -309,6 +309,36 @@ def test_lookup_refuses_when_email_already_present(db, world, operator):
     operator.put(f"/contacts/{contact_id}/email", json={"email": "typed@powerfulmedical.com"})
     blocked = operator.post(f"/contacts/{contact_id}/email/lookup")
     assert blocked.status_code == 409 and "already has an email" in blocked.json()["detail"]
+
+
+def test_do_not_contact_can_be_set_and_undone(db, world, operator):
+    contact = _approve(operator, world["candidates"][0])
+    marked = operator.put(f"/contacts/{contact['id']}/do-not-contact", json={"do_not_contact": True})
+    assert marked.status_code == 200, marked.text
+    assert marked.json()["do_not_contact"] is True
+    assert operator.post(f"/contacts/{contact['id']}/email/lookup").status_code == 400
+
+    undone = operator.put(f"/contacts/{contact['id']}/do-not-contact", json={"do_not_contact": False})
+    assert undone.json()["do_not_contact"] is False
+
+
+def test_erase_removes_the_person_and_their_emails(db, world, operator, make_user, login):
+    candidate = world["candidates"][0]
+    contact_id = uuid.UUID(_approve(operator, candidate)["id"])
+    db.add(EmailEvent(contact_id=contact_id, direction=EmailDirection.out, snippet="hello"))
+    db.commit()
+
+    assert operator.delete(f"/contacts/{contact_id}").status_code == 403  # erasing is admin-only
+    assert login(make_user(UserRole.admin)).delete(f"/contacts/{contact_id}").status_code == 204
+
+    db.expire_all()
+    assert db.get(Contact, contact_id) is None
+    assert db.scalars(select(EmailEvent).where(EmailEvent.contact_id == contact_id)).all() == []
+    # The candidate belongs to a run, so it stays — but nothing points at the deleted person.
+    decided = db.get(Candidate, candidate.id)
+    assert decided.status == CandidateStatus.approved and decided.contact_id is None
+    erasure = db.scalar(select(AuditLog).where(AuditLog.action == "contacts.erase"))
+    assert erasure is not None and "name" not in (erasure.details or {})
 
 
 def test_do_not_contact_blocks_lookup(db, world, operator):
