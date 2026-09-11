@@ -525,7 +525,7 @@ background jobs run in-process. Deploy with `bash scripts/deploy.sh`; migrations
    `POST /internal/poll-replies` with `INTERNAL_TASK_TOKEN`). Replies tab comes with the dashboard.
 8. ✅ Stats (`GET /stats`, cached 60s) + Langfuse eval scoring (backend). Stats tab comes with the dashboard.
 9. ✅ API deployed to Cloud Run (dev mode, Python 3.12) with GCS file storage, Secret Manager and
-   the reply-check schedule. Still to do once the dashboard exists: a public homepage + privacy
-   policy page, filled into the Google consent screen's Branding page, then publish the Google app
+   the reply-check schedule. The dashboard serves the public `/about` and `/privacy` pages for the
+   Google consent screen's Branding page; still to do: fill those URLs in and publish the Google app,
    so the Gmail refresh token stops expiring.
 10. Only after your explicit approval: switch to prod mode, first real send.

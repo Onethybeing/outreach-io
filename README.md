@@ -104,6 +104,8 @@ session cookie is same-origin and sign-in starts and ends on the dashboard.
 - Deploy: `bash scripts/deploy_dashboard.sh` after the API. It builds with Cloud Build, deploys Cloud Run
   service `outreach-dashboard`, and sets the API's `PUBLIC_BASE_URL` to the dashboard URL.
 - The Google sign-in client needs `<dashboard URL>/auth/callback` as an authorized redirect URI.
+- `/about` and `/privacy` are public (no sign-in); they are the homepage and privacy-policy URLs for
+  the Google consent screen. Everything else lives behind the sign-in gate in `src/app/(app)/`.
 
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
