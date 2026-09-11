@@ -226,11 +226,42 @@ class ContactOut(BaseModel):
     email_lookup_status: str
     email_lookup_note: str | None
     draft_status: str
+    draft_subject: str | None = None
+    draft_text: str | None = None
+    draft_generated_at: datetime | None = None
+    draft_approved_at: datetime | None = None
+    draft_edited: bool = False
     send_status: str
+    sent_at: datetime | None = None
+    mail_service: str | None = None
     reply_status: str | None
     do_not_contact: bool
     created_at: datetime
     updated_at: datetime
+
+
+class DraftEditIn(BaseModel):
+    subject: str
+    body: str
+
+
+class BulkActionIn(BaseModel):
+    dry_run: bool = True
+    contact_ids: list[uuid.UUID] | None = None
+
+
+class BulkActionOut(BaseModel):
+    eligible: int
+    queued: bool
+
+
+class EmailEventOut(ORM):
+    id: uuid.UUID
+    direction: str
+    gmail_message_id: str | None
+    snippet: str | None
+    classification: str | None
+    received_at: datetime
 
 
 class CandidateDecisionOut(BaseModel):

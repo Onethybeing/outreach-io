@@ -195,6 +195,9 @@ Rules:
 - 90 to 140 words. Plain text, no markdown, no emojis.
 - Open with one specific, true connection between the candidate's experience and {{ startup_name }}'s work.
 - Mention 1-2 concrete skills or results from the profile. Never invent achievements, numbers or companies.
+- Every claim must be stated in the profile as-is. Don't merge separate items into one claim (e.g. a
+  skill from one area applied to data from another domain) and don't imply experience in the
+  recipient's industry unless the profile lists it.
 - Say the resume is attached. End with one low-effort ask (a short call, or who to talk to).
 - Sign off as {{ sender_name or "the candidate" }}.
 

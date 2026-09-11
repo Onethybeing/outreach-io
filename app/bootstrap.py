@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit, prompts, vault
-from app.contacts import verification
+from app.contacts import sending, verification
 from app.discovery import graph as discovery
 from app.config import Settings
 from app.models import User, UserRole
@@ -63,3 +63,5 @@ def run(db: Session, settings: Settings) -> None:
         logger.warning("Marked %d interrupted discovery run(s) as failed", interrupted)
     if interrupted := verification.fail_interrupted_jobs(db):
         logger.warning("Marked %d interrupted contact verification/lookup job(s) as failed", interrupted)
+    if interrupted := sending.fail_interrupted_sends(db):
+        logger.warning("Marked %d interrupted send(s) as failed", interrupted)

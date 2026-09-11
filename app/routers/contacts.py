@@ -6,12 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.auth import require
 from app.config import get_settings
-from app.contacts import service, verification
+from app.contacts import drafts, sending, service, verification
 from app.db import get_db
-from app.models import Contact, Resume, Startup, User
+from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
-    BulkDecisionIn, BulkDecisionResult, BulkLookupIn, BulkLookupOut, CandidateDecisionOut, ContactOut,
-    EmailProviderIn, ManualEmailIn, SettingsOut,
+    BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn, BulkLookupOut,
+    CandidateDecisionOut, ContactOut, DraftEditIn, EmailEventOut, EmailProviderIn, ManualEmailIn, SettingsOut,
 )
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -35,7 +35,10 @@ def _contact_rows(db: Session, *conditions) -> list[ContactOut]:
             employment_verified=c.employment_verified, company_at_scrape=c.company_at_scrape,
             verified_title=c.verified_title, verified_company_url=c.verified_company_url, verified_at=c.verified_at,
             email=c.email, email_source=c.email_source, email_lookup_status=c.email_lookup_status.value,
-            email_lookup_note=c.email_lookup_note, draft_status=c.draft_status.value, send_status=c.send_status.value,
+            email_lookup_note=c.email_lookup_note, draft_status=c.draft_status.value,
+            draft_subject=c.draft_subject, draft_text=c.draft_text, draft_generated_at=c.draft_generated_at,
+            draft_approved_at=c.draft_approved_at, draft_edited=c.draft_edited,
+            send_status=c.send_status.value, sent_at=c.sent_at, mail_service=c.mail_service,
             reply_status=c.reply_status.value if c.reply_status else None, do_not_contact=c.do_not_contact,
             created_at=c.created_at, updated_at=c.updated_at,
         )
@@ -155,6 +158,72 @@ def lookup_bulk(body: BulkLookupIn, db: Session = Depends(get_db), user: User = 
     if not body.dry_run and eligible:
         service.submit_bulk_lookup(eligible, user.id)
     return BulkLookupOut(provider=provider, eligible=len(eligible), queued=not body.dry_run and bool(eligible))
+
+
+# --- drafts & sending -----------------------------------------------------------------
+
+@contacts_router.post("/{contact_id}/draft/generate", response_model=ContactOut)
+def generate_draft(
+    contact_id: uuid.UUID, force: bool = False,
+    db: Session = Depends(get_db), user: User = Depends(require("drafts.act")),
+):
+    drafts.generate(db, contact_id, user, force=force)
+    return contact_out(db, contact_id)
+
+
+@contacts_router.put("/{contact_id}/draft", response_model=ContactOut)
+def edit_draft(
+    contact_id: uuid.UUID, body: DraftEditIn,
+    db: Session = Depends(get_db), user: User = Depends(require("drafts.act")),
+):
+    drafts.edit(db, contact_id, body.subject, body.body, user)
+    return contact_out(db, contact_id)
+
+
+@contacts_router.post("/{contact_id}/draft/approve", response_model=ContactOut)
+def approve_draft(contact_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(require("drafts.act"))):
+    drafts.approve(db, contact_id, user)
+    return contact_out(db, contact_id)
+
+
+@contacts_router.post("/drafts/generate-bulk", response_model=BulkActionOut)
+def generate_drafts_bulk(body: BulkActionIn, db: Session = Depends(get_db), user: User = Depends(require("drafts.act"))):
+    """Contacts with an email and no draft. dry_run=true (default) only counts."""
+    eligible = drafts.bulk_eligible(db, body.contact_ids)
+    if not body.dry_run and eligible:
+        drafts.submit_bulk(eligible, user.id)
+    return BulkActionOut(eligible=len(eligible), queued=not body.dry_run and bool(eligible))
+
+
+@contacts_router.post("/{contact_id}/send", response_model=ContactOut)
+def send_email(
+    contact_id: uuid.UUID, force: bool = False,
+    db: Session = Depends(get_db), user: User = Depends(require("emails.send")),
+):
+    sending.send(db, contact_id, user, force=force)
+    return contact_out(db, contact_id)
+
+
+@contacts_router.post("/send-approved", response_model=BulkActionOut)
+def send_approved_bulk(body: BulkActionIn, db: Session = Depends(get_db), user: User = Depends(require("emails.send"))):
+    """Every contact with an approved draft that hasn't been sent. dry_run=true (default) only counts."""
+    eligible = sending.bulk_eligible(db, body.contact_ids)
+    if not body.dry_run and eligible:
+        sending.submit_bulk(eligible, user.id)
+    return BulkActionOut(eligible=len(eligible), queued=not body.dry_run and bool(eligible))
+
+
+@contacts_router.get("/{contact_id}/emails", response_model=list[EmailEventOut])
+def list_emails(contact_id: uuid.UUID, db: Session = Depends(get_db), _: User = Depends(require("dashboard.view"))):
+    events = db.scalars(select(EmailEvent).where(EmailEvent.contact_id == contact_id).order_by(EmailEvent.received_at))
+    return [
+        EmailEventOut(
+            id=e.id, direction="out" if e.direction == EmailDirection.out else "in",
+            gmail_message_id=e.gmail_message_id, snippet=e.snippet,
+            classification=e.classification.value if e.classification else None, received_at=e.received_at,
+        )
+        for e in events
+    ]
 
 
 # --- settings --------------------------------------------------------------------------
