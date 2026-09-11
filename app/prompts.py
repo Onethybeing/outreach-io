@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, llm
-from app.models import Prompt, User
+from app.models import AuditLog, Prompt, User
 from app.prompt_defaults import NODES, NodeContract
 
 # Sandboxed: prompts are edited in the dashboard, so templates must not reach Python internals.
@@ -254,6 +254,12 @@ def upgrade_system_defaults(db: Session) -> list[str]:
     for node, contract in NODES.items():
         active = db.scalar(select(Prompt).where(Prompt.node_name == node, Prompt.is_active))
         if active is None or active.created_by is not None or active.note != SYSTEM_DEFAULT_NOTE:
+            continue
+        # A person rolling back to an old default leaves it authorless; the audit log remembers.
+        chosen_by_person = db.scalar(
+            select(AuditLog.id).where(AuditLog.action == "prompts.activate", AuditLog.target_id == str(active.id)).limit(1)
+        )
+        if chosen_by_person:
             continue
         if (active.template, active.model, active.temperature) == (contract.template, contract.model, contract.temperature):
             continue

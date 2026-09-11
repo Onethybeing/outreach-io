@@ -135,6 +135,12 @@ def test_outdated_system_default_is_upgraded_but_human_versions_are_not(db, make
     assert prompts.get_active(db, "find_kdms").template.endswith("MY RULE")
     assert prompts.upgrade_system_defaults(db) == []  # idempotent
 
+    # An admin deliberately rolls back to the old default: later startups must not undo that.
+    old = db.scalar(select(Prompt).where(Prompt.node_name == "classify_reply", Prompt.template.like("%OLD WORDING")))
+    prompts.activate(db, "classify_reply", old.version, admin)
+    assert prompts.upgrade_system_defaults(db) == []
+    assert prompts.get_active(db, "classify_reply").id == old.id
+
 
 def _max_version(db, node):
     return db.scalar(select(func.max(Prompt.version)).where(Prompt.node_name == node))
