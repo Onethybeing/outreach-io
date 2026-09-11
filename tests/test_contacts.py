@@ -68,6 +68,7 @@ def world(db, monkeypatch):
     monkeypatch.setattr(apollo, "enrich_org", fake_enrich)
     monkeypatch.setattr(brightdata, "scrape_profile", fake_profile)
     monkeypatch.setitem(service.EMAIL_PROVIDERS, "apollo", fake_email)
+    monkeypatch.setattr(service, "DEFAULT_EMAIL_PROVIDER", "apollo")
     # Jobs run inline against the test transaction.
     monkeypatch.setattr(verification, "submit_verification", lambda cid: verification.execute_verification(db, cid))
     monkeypatch.setattr(contacts_router.verification, "submit_verification", lambda cid: verification.execute_verification(db, cid))
@@ -428,6 +429,110 @@ def test_apollo_find_email_parsing(db, monkeypatch):
     assert apollo.find_email(db, "Jane", "u", "acme.com").found is False
     current["case"] = "nobody"
     assert "no record" in apollo.find_email(db, "Jane", "u", "acme.com").note
+
+
+def _saved_contacts(monkeypatch, contacts):
+    from app import vault
+
+    monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
+    monkeypatch.setattr(apollo.httpx, "post", lambda *a, **k: httpx.Response(200, json={"contacts": contacts}))
+
+
+def test_saved_contacts_match_by_linkedin_profile(db, monkeypatch):
+    _saved_contacts(monkeypatch, [
+        {"name": "Simon Rovder", "linkedin_url": "http://www.linkedin.com/in/Simon-Rovder-B9091696", "email": "Simon@PowerfulMedical.com", "email_status": "verified"},
+    ])
+    result = apollo.find_email_in_saved_contacts(db, "Simon Rovder", "https://www.linkedin.com/in/simon-rovder-b9091696", None)
+    assert result.found and result.email == "simon@powerfulmedical.com"
+
+
+def test_saved_contacts_name_match_needs_company_domain_and_uniqueness(db, monkeypatch):
+    person = {"name": "Jane Doe", "linkedin_url": None, "email": "jane@acme.example"}
+    _saved_contacts(monkeypatch, [person])
+    assert apollo.find_email_in_saved_contacts(db, "jane  doe", "https://www.linkedin.com/in/jane", "https://acme.example").found
+    other_company = apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/jane", "https://beta.example")
+    assert not other_company.found and other_company.retryable
+
+    _saved_contacts(monkeypatch, [person, {**person, "email": "jane2@acme.example"}])
+    assert not apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/jane", "acme.example").found
+
+
+def test_saved_contact_without_revealed_email_is_retryable(db, monkeypatch):
+    _saved_contacts(monkeypatch, [{"name": "Jane", "linkedin_url": "https://www.linkedin.com/in/jane", "email": "email_not_unlocked@domain.com"}])
+    result = apollo.find_email_in_saved_contacts(db, "Jane", "https://www.linkedin.com/in/jane", None)
+    assert not result.found and result.retryable and "reveal" in result.note
+
+
+def test_saved_contact_found_via_domain_query_despite_different_name(db, monkeypatch):
+    from app import vault
+
+    monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
+    queries = []
+    jane = {"id": "c1", "name": "Jane Doe", "linkedin_url": "https://www.linkedin.com/in/jane-doe", "email": "jane@acme.example"}
+
+    def fake_post(url, json=None, **kwargs):
+        queries.append((json["q_keywords"], json["page"]))
+        found = [jane] if json["q_keywords"] == "acme.example" else []
+        return httpx.Response(200, json={"contacts": found, "pagination": {"total_pages": 1}})
+
+    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    result = apollo.find_email_in_saved_contacts(db, "Dr. Jane Doe, PhD", "https://uk.linkedin.com/in/Jane-Doe", "https://www.acme.example")
+    assert result.found and result.email == "jane@acme.example"
+    assert queries == [("jane doe", 1), ("acme.example", 1)]
+
+
+def test_same_person_saved_twice_still_matches_by_name(db, monkeypatch):
+    copy = {"name": "Jane Doe", "linkedin_url": None, "email": "jane@acme.example"}
+    _saved_contacts(monkeypatch, [{**copy, "id": "a"}, {**copy, "id": "b"}])
+    result = apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/other", "acme.example")
+    assert result.found and result.email == "jane@acme.example"
+
+
+def test_profile_match_skips_the_remaining_searches(db, monkeypatch):
+    from app import vault
+
+    monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json["q_keywords"])
+        jane = {"id": "a", "name": "Jane Doe", "linkedin_url": "https://www.linkedin.com/in/jane", "email": "jane@acme.example"}
+        return httpx.Response(200, json={"contacts": [jane], "pagination": {"total_pages": 3}})
+
+    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    assert apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/jane", "acme.example").found
+    assert calls == ["jane doe"]  # no further pages and no domain query
+
+
+def test_duplicate_saved_copies_prefer_the_revealed_email(db, monkeypatch):
+    profile = "https://www.linkedin.com/in/jane"
+    _saved_contacts(monkeypatch, [
+        {"id": "a", "name": "Jane", "linkedin_url": profile, "email": "email_not_unlocked@domain.com"},
+        {"id": "b", "name": "Jane", "linkedin_url": profile, "email": "jane@acme.example"},
+    ])
+    assert apollo.find_email_in_saved_contacts(db, "Jane", profile, None).email == "jane@acme.example"
+
+
+def test_retryable_miss_is_awaiting_user_and_can_retry(db, world, operator):
+    world["state"]["email"] = apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet", retryable=True)
+    contact_id = _verified_contact(operator, world)
+    first = operator.post(f"/contacts/{contact_id}/email/lookup")
+    assert first.status_code == 200 and first.json()["email_lookup_status"] == "awaiting_user"
+    assert uuid.UUID(contact_id) in service.bulk_lookup_eligible(db, [uuid.UUID(contact_id)])
+    assert contact_id in {c["id"] for c in operator.get("/contacts?view=no_email").json()}
+    world["state"]["email"] = apollo.EmailResult(True, "simon@powerfulmedical.com", "Found in saved Apollo contacts")
+    second = operator.post(f"/contacts/{contact_id}/email/lookup")  # no force needed
+    assert second.status_code == 200 and second.json()["email"] == "simon@powerfulmedical.com"
+
+
+def test_default_email_provider_is_saved_contacts(db, make_user, login, monkeypatch):
+    from app.models import AppSetting
+
+    db.query(AppSetting).filter(AppSetting.key == "email_provider").delete()
+    db.commit()
+    body = login(make_user(UserRole.viewer)).get("/settings").json()
+    assert body["email_provider"] == "apollo_saved_contacts"
+    assert body["email_providers"] == ["apollo", "apollo_saved_contacts"]
 
 
 def test_apollo_enrich_by_name_only_trusts_matching_company(db, monkeypatch):

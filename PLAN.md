@@ -93,7 +93,7 @@ takes effect on the next node call without a redeploy.
 | **Tavily** | Web search for startups + KDMs | ✅ received |
 | **BrightData** | LinkedIn profile scrape = employment verification | ✅ works — live-checked: "LinkedIn people profiles" scraper returns the current company and its LinkedIn page in ~50–60s per profile (billed per profile) |
 | **Neon Postgres** | Primary database | ✅ received — migration applied and verified |
-| **Apollo.io** | Company enrichment; email lookup | ⚠️ free plan — live-checked: `organizations/enrich` works; `people/match` (email) and `mixed_people/api_search` return 403 "not included in your Free plan". **Emails need a paid Apollo plan, another provider (e.g. Hunter.io), or manual entry — your call.** |
+| **Apollo.io** | Company enrichment; email lookup | ⚠️ free plan — live-checked: `organizations/enrich` and `contacts/search` work; `people/match`, `people/bulk_match` and `mixed_people/api_search` return 403 "not included in your Free plan". **Default email provider is "Apollo saved contacts"**: reveal an email on apollo.io (free credits), save the person, and the app's lookup pulls it in. The automatic `apollo` provider works on a paid plan. |
 | **Gmail OAuth** (sender `sourav.jhinjha@gmail.com`) | Send mail, read replies | ✅ signed in, refresh token verified — consent screen is in Testing, so the token expires every 7 days until the app is published (Phase 9) |
 | **Langfuse** (US cloud, project `outreach.io`) | Tracing + evals | ✅ received — key valid |
 | **GCP** — account `sourav.jhinjha@gmail.com` (free credits, billing set up) | Cloud Run, Secret Manager, Cloud Scheduler, Artifact Registry, Cloud SQL backup | ❌ needs a one-time `gcloud auth login` by you at deploy time |
