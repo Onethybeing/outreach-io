@@ -29,6 +29,24 @@ decision-makers → dedupe against contacts.
 | `GET /runs/{id}/stream` | Same feed as server-sent events, ends with `event: end` | all roles |
 | `GET /candidates?status=&run_id=` | Proposed people across runs, with the CV each was found for | all roles |
 
+**Phase 4** — contacts (`app/contacts/`): human decisions on candidates, employment verification,
+email lookup.
+
+| Route | What | Who |
+|---|---|---|
+| `POST /candidates/{id}/approve` | Create a contact and start verification | admin, operator |
+| `POST /candidates/{id}/reject` · `/reuse` · `/update-contact` | Reject; link to the existing contact; re-point it to this run and re-verify | admin, operator |
+| `POST /candidates/bulk` `{action: approve\|reject, candidate_ids}` | Decide many, one result per candidate | admin, operator |
+| `GET /contacts?view=active\|sent\|no_email\|all&resume_id=&startup_id=` | Contacts table, with the CV each was found for | all roles |
+| `POST /contacts/{id}/verify` | Run verification again (background) | admin, operator |
+| `POST /contacts/{id}/email/lookup?force=` | Find the email now (skips done/unverified unless forced) | admin, operator |
+| `PUT /contacts/{id}/email` `{email}` | Enter an email manually | admin, operator |
+| `POST /contacts/email/lookup-bulk` `{dry_run, contact_ids?}` | Count (dry run) or start lookups for all eligible | admin, operator |
+| `GET /settings`, `PUT /settings/email-provider` | Mode and email provider (change: admin) | all / admin |
+
+Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
+Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §3.
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).

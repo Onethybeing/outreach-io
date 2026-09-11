@@ -192,6 +192,7 @@ class CandidateOut(ORM):
     linkedin_url: str
     reason: str | None
     existing_contact_id: uuid.UUID | None
+    contact_id: uuid.UUID | None = None
     status: str
     cv_filename: str
 
@@ -200,6 +201,79 @@ class RunDetailOut(RunOut):
     resume_filename: str
     startups: list[StartupOut]
     candidates: list[CandidateOut]
+
+
+class ContactOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    title: str | None
+    linkedin_url: str
+    startup_id: uuid.UUID
+    startup_name: str
+    startup_website: str | None
+    run_id: uuid.UUID
+    cv_used_id: uuid.UUID
+    cv_filename: str
+    verification_status: str
+    verification_note: str | None
+    employment_verified: bool | None
+    company_at_scrape: str | None
+    verified_title: str | None
+    verified_company_url: str | None
+    verified_at: datetime | None
+    email: str | None
+    email_source: str | None
+    email_lookup_status: str
+    email_lookup_note: str | None
+    draft_status: str
+    send_status: str
+    reply_status: str | None
+    do_not_contact: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class CandidateDecisionOut(BaseModel):
+    candidate_id: uuid.UUID
+    status: str
+    contact: ContactOut | None = None
+
+
+class BulkDecisionIn(BaseModel):
+    action: str = Field(pattern="^(approve|reject)$")
+    candidate_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class BulkDecisionResult(BaseModel):
+    candidate_id: uuid.UUID
+    ok: bool
+    status: str | None = None
+    error: str | None = None
+
+
+class ManualEmailIn(BaseModel):
+    email: str
+
+
+class BulkLookupIn(BaseModel):
+    dry_run: bool = True
+    contact_ids: list[uuid.UUID] | None = None
+
+
+class BulkLookupOut(BaseModel):
+    provider: str
+    eligible: int
+    queued: bool
+
+
+class SettingsOut(BaseModel):
+    app_mode: str
+    email_provider: str
+    email_providers: list[str]
+
+
+class EmailProviderIn(BaseModel):
+    provider: str
 
 
 class RunEventOut(ORM):

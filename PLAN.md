@@ -74,8 +74,10 @@ takes effect on the next node call without a redeploy.
 
 | Node | Trigger | Does |
 |---|---|---|
-| `verify_employment` | "Run Apollo" (single or bulk) button | Calls Apollo people-enrichment (primary) to confirm current employer + get email. If Apollo has no data, fallback to BrightData LinkedIn profile scrape for employment (BrightData does not reliably return emails). |
-| `cross_check_company_match` | automatic, right after verify | Fuzzy-matches scraped current employer vs. the startup name (LLM tie-break for ambiguous names). Mismatch → contact flagged, excluded from bulk actions, visible with a warning badge. |
+| `enrich_company` | automatic, first step of verification | Apollo organization enrich (free plan) by website domain, or by company name when there's no website (trusted only if the returned name matches). Caches the startup's LinkedIn company page and fills a missing website. |
+| `scrape_profile` | Approve / Update / "Verify again" | BrightData LinkedIn profile scrape (async, ~50–60s): the person's current company name + LinkedIn company page. |
+| `cross_check_company_match` | automatic, after the scrape | verified if the company page matches, else if the names match; mismatch if both pages are known and differ; otherwise the LLM tie-break prompt (≥0.7 confidence) decides. Mismatch/unconfirmed contacts are excluded from bulk email lookup. |
+| `find_email` | "Find email" (single, synchronous) or "Find emails for all" (background, with a free dry-run count first) | Swappable provider (`settings.email_provider`). Apollo is wired in, but its free plan blocks `people/match` — the app says so clearly, marks the lookup failed (retryable) and a bulk job stops instead of trying everyone. Manual email entry always works. |
 | `generate_draft` | "Generate draft" (single or bulk) — only for contacts with an email | LLM drafts a personalized email using resume + startup + contact context. |
 | `send_email` | "Send" (single or "send all approved") | Sends via Gmail API, attaches the resume used for that run. Respects dev/prod toggle (§6). |
 | `track_replies` | Cloud Scheduler cron, e.g. every 10 min | Polls the Gmail thread for each sent message. |
@@ -89,9 +91,9 @@ takes effect on the next node call without a redeploy.
 |---|---|---|
 | **Groq API** | All LLM calls: parsing, relevance filters, drafts, reply classification, eval judges | ✅ received |
 | **Tavily** | Web search for startups + KDMs | ✅ received |
-| **BrightData** | LinkedIn profile scrape (employment verification fallback) | ✅ received |
+| **BrightData** | LinkedIn profile scrape = employment verification | ✅ works — live-checked: "LinkedIn people profiles" scraper returns the current company and its LinkedIn page in ~50–60s per profile (billed per profile) |
 | **Neon Postgres** | Primary database | ✅ received — migration applied and verified |
-| **Apollo.io** | Email lookup + employment verification (primary) | ✅ received — key valid; whether the plan tier allows email reveal is checked on one real contact in Phase 4 |
+| **Apollo.io** | Company enrichment; email lookup | ⚠️ free plan — live-checked: `organizations/enrich` works; `people/match` (email) and `mixed_people/api_search` return 403 "not included in your Free plan". **Emails need a paid Apollo plan, another provider (e.g. Hunter.io), or manual entry — your call.** |
 | **Gmail OAuth** (sender `sourav.jhinjha@gmail.com`) | Send mail, read replies | ✅ signed in, refresh token verified — consent screen is in Testing, so the token expires every 7 days until the app is published (Phase 9) |
 | **Langfuse** (US cloud, project `outreach.io`) | Tracing + evals | ✅ received — key valid |
 | **GCP** — account `sourav.jhinjha@gmail.com` (free credits, billing set up) | Cloud Run, Secret Manager, Cloud Scheduler, Artifact Registry, Cloud SQL backup | ❌ needs a one-time `gcloud auth login` by you at deploy time |
@@ -153,6 +155,20 @@ contacts  + draft_prompt_version_id -> prompts.id, approved_by, draft_approved_b
 runs      + started_by -> users.id, prompt_versions jsonb   -- snapshot of active prompt ids at run start
 email_events + classification enum(reply, bounce, out_of_office, unsubscribe)
 ```
+
+### Added in Phase 4 (contacts, verification, email lookup)
+
+```
+contacts  apollo_status → email_lookup_status enum(not_run, running, found, not_found, failed)
+          + email_lookup_note, email_looked_up_at; email_source is now a string (apollo | hunter | manual)
+          + verification_status enum(not_run, queued, running, verified, mismatch, unconfirmed, failed)
+          + verification_source, verified_title, verified_company_url, verified_at
+candidates + contact_id   -- the contact it became (approve) or was linked to (reuse / update)
+startups   + linkedin_url, company_enriched_at   -- company page cache for verification
+```
+
+Contact state lives in these columns rather than a LangGraph checkpointer: every human gate is an
+API call that reads and advances the row, so a checkpointer would duplicate the same state.
 
 ### Added in Phase 3 (discovery)
 
@@ -385,7 +401,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
   actions) over a full admin framework like Refine.dev.
 - **Gmail integration** — recommend direct Gmail API (OAuth) from FastAPI over a Gmail MCP
   server, since reply tracking is a scheduled job, not an LLM-driven action.
-- **Apollo vs BrightData default** — benchmark on a few real profiles once the Apollo key arrives.
+- **Email provider** — Apollo's free plan can't return emails. Options: upgrade Apollo, add a
+  Hunter.io key (free tier ~25 lookups/month), or manual entry only for now.
 - **Neon CLI** — not needed by the app (it connects with the connection string). The global
   install was blocked by a local safety check; run it yourself if you want the Neon MCP/skills.
 
@@ -432,6 +449,15 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 25. Groq's 8k tokens/minute limit → calls wait for the reset and show "waiting Ns for the Groq rate
     limit" in the progress feed; a run on this tier takes a minute or two.
 26. Two runs on the same resume at once → the second is refused (409) to avoid double spend.
+27. Same person approved from two runs at once → unique LinkedIn URL + row lock; the second gets
+    409 "choose Reuse or Update".
+28. Person became a contact after discovery ran → re-checked at decision time, not just at discovery.
+29. Startup without a website → company page looked up by name, trusted only if the name matches.
+30. Email provider can't answer (plan limit, bad key) → clear message, lookup marked failed
+    (retryable), bulk job stops instead of hitting every contact.
+31. Server restarts during verification or lookup → marked failed with "run it again".
+32. "Update" on a contact that was already emailed → email/draft reset for the new company, but
+    send history and do-not-contact are kept, so a re-send still needs an explicit force.
 
 ---
 
@@ -441,7 +467,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 2. ✅ Auth + RBAC + audit log + API vault + prompt store (backend). Done before the agent so
    every node reads keys and prompts from the vault/store from day one.
 3. ✅ `discovery_graph` (resume ingest → profile → startups → KDMs → dedupe), tested via API + Langfuse.
-4. Candidate approve / reuse / update → contacts, and `contact_graph` verify/cross-check nodes.
+4. ✅ Candidate approve / reject / reuse / update → contacts; verification (Apollo company page +
+   BrightData profile + LLM tie-break); provider-agnostic email lookup; manual email.
 5. Draft generation + dev-mode send (`.eml`, no real send).
 6. Dashboard: Library, Run Agent, Candidates, Contacts, Settings (Vault / Prompts / Users / Mode /
    Audit Log).

@@ -6,8 +6,6 @@ Every step writes a RunEvent (the dashboard's live progress feed) and a Langfuse
 
 import json
 import logging
-import queue
-import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import llm, telemetry, vault
 from app.db import SessionLocal, engine
+from app.jobs import WorkerPool
 from app.discovery import tavily
 from app.discovery.extract import ExtractionError, extract_text
 from app.discovery.normalize import company_key, linkedin_profile_url, title_names_other_company, website_domain
@@ -475,27 +474,14 @@ def run_in_background(run_id: uuid.UUID) -> None:
         logger.exception("Discovery run %s crashed before it could record a failure", run_id)
 
 
-# Own workers, so minutes-long runs never occupy the web server's request threads. Daemon threads:
-# stopping the server must not wait for runs to finish — interrupted runs are failed at next startup
-# (fail_interrupted_runs). Extra runs queue as 'pending'.
-RUN_WORKERS = 4
-_run_queue: "queue.Queue[uuid.UUID]" = queue.Queue()
-_workers: list[threading.Thread] = []
-_workers_lock = threading.Lock()
-
-
-def _worker() -> None:
-    while True:
-        run_in_background(_run_queue.get())
+# Own workers, so minutes-long runs never occupy the web server's request threads. Interrupted runs
+# are failed at next startup (fail_interrupted_runs). Extra runs queue as 'pending'.
+_run_pool = WorkerPool("discovery", workers=4)
 
 
 def submit_run(run_id: uuid.UUID) -> None:
-    with _workers_lock:
-        while len(_workers) < RUN_WORKERS:
-            thread = threading.Thread(target=_worker, name=f"discovery-{len(_workers)}", daemon=True)
-            thread.start()
-            _workers.append(thread)
-    _run_queue.put(run_id)
+    # Looked up at call time so tests can replace run_in_background.
+    _run_pool.submit(lambda rid: run_in_background(rid), run_id)
 
 
 def _fail_active_runs(db: Session, message: str, only_stale: bool) -> int:

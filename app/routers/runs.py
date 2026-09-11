@@ -98,7 +98,7 @@ def _candidates(db: Session, *conditions) -> list[CandidateOut]:
         CandidateOut(
             id=c.id, run_id=c.run_id, startup_id=c.startup_id, startup_name=startup_name, name=c.name,
             title=c.title, linkedin_url=c.linkedin_url, reason=c.reason,
-            existing_contact_id=c.existing_contact_id, status=c.status.value, cv_filename=cv,
+            existing_contact_id=c.existing_contact_id, contact_id=c.contact_id, status=c.status.value, cv_filename=cv,
         )
         for c, startup_name, cv in rows
     ]
