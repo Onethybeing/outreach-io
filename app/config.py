@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     storage_backend: str = "local"
     local_storage_dir: str = "storage"
     gcs_bucket: str = ""
+    # Where Google sign-in lands afterwards. The API alone has no pages, so the default shows the
+    # signed-in user; when the dashboard fronts the API (same origin), set this to "/".
+    post_login_redirect: str = "/auth/me"
 
     # Provider keys: read only to seed the vault on first start.
     groq_api_key: str = ""

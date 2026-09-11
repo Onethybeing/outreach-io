@@ -74,7 +74,8 @@ def callback(
     audit.record(db, user, "auth.login", "user", user.id)
     db.commit()
 
-    response = RedirectResponse("/auth/me", status.HTTP_302_FOUND)
+    # Server-side setting, never taken from the request, so this can't become an open redirect.
+    response = RedirectResponse(get_settings().post_login_redirect, status.HTTP_302_FOUND)
     response.set_cookie(
         SESSION_COOKIE, sign_session(user.id), max_age=SESSION_MAX_AGE,
         httponly=True, secure=cookie_secure(), samesite="lax",

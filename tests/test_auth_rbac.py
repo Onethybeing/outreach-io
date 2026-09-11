@@ -118,6 +118,15 @@ def test_google_callback_denies_unknown_email_and_audits(db, client, monkeypatch
     assert denied is not None
 
 
+def test_google_callback_redirects_to_configured_page(db, client, make_user, monkeypatch):
+    from app.config import get_settings
+
+    make_user(UserRole.viewer, email="lands@test.example")
+    assert _callback(client, monkeypatch, "lands@test.example").headers["location"] == "/auth/me"  # API-only default
+    monkeypatch.setattr(get_settings(), "post_login_redirect", "/")
+    assert _callback(client, monkeypatch, "lands@test.example").headers["location"] == "/"  # dashboard in front
+
+
 def test_google_callback_rejects_state_mismatch(client, monkeypatch, make_user):
     make_user(UserRole.admin, email="known2@test.example")
     monkeypatch.setattr(auth_router, "exchange_code_for_claims", lambda code, nonce: {"email": "known2@test.example"})
