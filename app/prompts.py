@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, llm
-from app.models import Prompt, User
+from app.models import AuditLog, Prompt, User
 from app.prompt_defaults import NODES, NodeContract
 
 # Sandboxed: prompts are edited in the dashboard, so templates must not reach Python internals.
@@ -232,10 +232,50 @@ def seed_defaults(db: Session) -> list[str]:
                 model=contract.model,
                 temperature=contract.temperature,
                 is_active=True,
-                note="Default",
+                note=SYSTEM_DEFAULT_NOTE,
             )
         )
         audit.record(db, None, "prompts.seed", "node", node)
         seeded.append(node)
     db.commit()
     return seeded
+
+
+SYSTEM_DEFAULT_NOTE = "Default"
+
+
+def upgrade_system_defaults(db: Session) -> list[str]:
+    """When the code's default prompt improves, move nodes still on an older *system* default to it.
+
+    Only touches an active version the system created (no author, note "Default"). Anything a person
+    saved, activated or reset keeps running untouched. The old version stays available for rollback.
+    """
+    upgraded = []
+    for node, contract in NODES.items():
+        active = db.scalar(select(Prompt).where(Prompt.node_name == node, Prompt.is_active))
+        if active is None or active.created_by is not None or active.note != SYSTEM_DEFAULT_NOTE:
+            continue
+        # A person rolling back to an old default leaves it authorless; the audit log remembers.
+        chosen_by_person = db.scalar(
+            select(AuditLog.id).where(AuditLog.action == "prompts.activate", AuditLog.target_id == str(active.id)).limit(1)
+        )
+        if chosen_by_person:
+            continue
+        if (active.template, active.model, active.temperature) == (contract.template, contract.model, contract.temperature):
+            continue
+        validate(node, contract.template)
+        latest = db.scalar(select(func.max(Prompt.version)).where(Prompt.node_name == node))
+        active.is_active = False
+        db.flush()
+        new = Prompt(
+            node_name=node, version=latest + 1, template=contract.template,
+            required_variables=list(contract.required), model=contract.model,
+            temperature=contract.temperature, is_active=True, note=SYSTEM_DEFAULT_NOTE,
+        )
+        db.add(new)
+        db.flush()
+        audit.record(db, None, "prompts.upgrade_default", "prompt", new.id,
+                     {"node": node, "from_version": active.version, "to_version": new.version})
+        upgraded.append(node)
+    db.commit()
+    return upgraded

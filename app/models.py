@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -103,6 +104,14 @@ class CredentialStatus(str, enum.Enum):
     retired = "retired"
 
 
+class CandidateStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    reused = "reused"  # matched an existing contact; kept that contact as-is
+    updated = "updated"  # matched an existing contact; re-verify it
+
+
 # --- tables --------------------------------------------------------------
 
 class Resume(Base):
@@ -112,6 +121,8 @@ class Resume(Base):
     filename: Mapped[str] = mapped_column(String(512))
     storage_path: Mapped[str] = mapped_column(String(1024))
     parsed_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -120,6 +131,14 @@ class Resume(Base):
 
 class Run(Base):
     __tablename__ = "runs"
+    __table_args__ = (
+        Index(
+            "uq_runs_one_active_per_resume",
+            "resume_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     resume_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("resumes.id"))
@@ -127,10 +146,18 @@ class Run(Base):
     num_kdms_per_company: Mapped[int] = mapped_column(default=5)
     status: Mapped[RunStatus] = mapped_column(Enum(RunStatus), default=RunStatus.pending)
     langfuse_trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    langfuse_trace_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     started_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     # Active prompt id per node at run start, so later edits don't blur what a run used.
     prompt_versions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Counts: tavily_searches, llm_calls, prompt_tokens, completion_tokens, rate_limit_wait_seconds.
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Touched on every progress event; a stale heartbeat on a "running" run means it died.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     resume: Mapped["Resume"] = relationship(back_populates="runs")
     startups: Mapped[list["Startup"]] = relationship(back_populates="run")
@@ -146,6 +173,7 @@ class Startup(Base):
     website: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    relevance: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     run: Mapped["Run"] = relationship(back_populates="startups")
@@ -296,6 +324,45 @@ class Prompt(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Candidate(Base):
+    """A person the discovery graph proposes. Becomes (or links to) a Contact only on approval."""
+
+    __tablename__ = "candidates"
+    __table_args__ = (UniqueConstraint("run_id", "linkedin_url", name="uq_candidates_run_linkedin"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), index=True)
+    startup_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("startups.id"))
+    name: Mapped[str] = mapped_column(String(256))
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    linkedin_url: Mapped[str] = mapped_column(String(1024), index=True)  # normalized
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    existing_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("contacts.id"), nullable=True
+    )
+    status: Mapped[CandidateStatus] = mapped_column(
+        Enum(CandidateStatus), default=CandidateStatus.pending
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class RunEvent(Base):
+    """Progress feed for the "agent thinking" panel. Integer id gives a stable order to stream by."""
+
+    __tablename__ = "run_events"
+    __table_args__ = (Index("ix_run_events_run_id_id", "run_id", "id"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"))
+    node: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(16))  # started | completed | info | warning | failed
+    message: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

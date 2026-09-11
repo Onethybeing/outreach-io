@@ -117,6 +117,35 @@ def test_seed_is_idempotent(db):
     assert prompts.seed_defaults(db) == []
 
 
+def test_outdated_system_default_is_upgraded_but_human_versions_are_not(db, make_user):
+    admin = make_user(UserRole.admin)
+    # classify_reply: simulate an old, untouched system default.
+    active = prompts.get_active(db, "classify_reply")
+    active.is_active = False
+    db.flush()
+    db.add(Prompt(node_name="classify_reply", version=_max_version(db, "classify_reply") + 1,
+                  template=NODES["classify_reply"].template + "\nOLD WORDING", required_variables=["reply_text"],
+                  model="openai/gpt-oss-20b", temperature=0, is_active=True, note="Default"))
+    # find_kdms: a person's own edit that also differs from the code default.
+    prompts.create_version(db, "find_kdms", NODES["find_kdms"].template + "\nMY RULE", "openai/gpt-oss-120b", 0, admin, activate=True)
+    db.commit()
+
+    assert "classify_reply" in prompts.upgrade_system_defaults(db)
+    assert prompts.get_active(db, "classify_reply").template == NODES["classify_reply"].template
+    assert prompts.get_active(db, "find_kdms").template.endswith("MY RULE")
+    assert prompts.upgrade_system_defaults(db) == []  # idempotent
+
+    # An admin deliberately rolls back to the old default: later startups must not undo that.
+    old = db.scalar(select(Prompt).where(Prompt.node_name == "classify_reply", Prompt.template.like("%OLD WORDING")))
+    prompts.activate(db, "classify_reply", old.version, admin)
+    assert prompts.upgrade_system_defaults(db) == []
+    assert prompts.get_active(db, "classify_reply").id == old.id
+
+
+def _max_version(db, node):
+    return db.scalar(select(func.max(Prompt.version)).where(Prompt.node_name == node))
+
+
 @pytest.mark.parametrize(
     "template, message",
     [
