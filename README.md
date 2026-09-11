@@ -91,6 +91,20 @@ cases in `evals/parse_resume/cases/*.json` (format in the script's docstring).
 - Deploy: `alembic upgrade head` then `bash scripts/deploy.sh` (Cloud Build, no local Docker).
   One instance, CPU always on, so in-process background jobs keep running.
 
+**Phase 6** — dashboard (`dashboard/`, Next.js 16 + shadcn/ui).
+
+Tabs: Stats, Library (upload CVs), Run agent (live progress over SSE), Candidates (approve, reject,
+reuse, update, in bulk), Contacts (Active / Sent / No email; verify, find or enter email, draft,
+approve, send, in bulk), Replies, Settings (mode and email provider, API vault, prompts, users, audit log).
+Buttons follow the signed-in role; the API still checks every action.
+
+The browser only talks to the dashboard. Next.js forwards `/api/*` and `/auth/*` to the API, so the
+session cookie is same-origin and sign-in starts and ends on the dashboard.
+
+- Deploy: `bash scripts/deploy_dashboard.sh` after the API. It builds with Cloud Build, deploys Cloud Run
+  service `outreach-dashboard`, and sets the API's `PUBLIC_BASE_URL` to the dashboard URL.
+- The Google sign-in client needs `<dashboard URL>/auth/callback` as an authorized redirect URI.
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).
@@ -106,9 +120,17 @@ alembic upgrade head
 uvicorn app.main:app --port 8000
 ```
 
-Sign in at http://localhost:8000/auth/login. The Google OAuth client needs the authorized redirect
-URI `http://localhost:8000/auth/callback`, and while the consent screen is in Testing, every login
-email must also be a test user.
+Dashboard (in another terminal):
+
+```bash
+cd dashboard
+npm install
+npm run dev                 # http://localhost:3000, proxies to the API at API_ORIGIN (default http://localhost:8000)
+```
+
+For sign-in through the dashboard, set `PUBLIC_BASE_URL=http://localhost:3000` and `POST_LOGIN_REDIRECT=/`
+in `.env`. The Google OAuth client needs the matching redirect URI (`http://localhost:3000/auth/callback`),
+and while the consent screen is in Testing, every login email must also be a test user.
 
 ## Tests
 

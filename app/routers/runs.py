@@ -163,7 +163,11 @@ def stream_events(
                 yield ": keepalive\n\n"
             await asyncio.sleep(1)
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    # no-transform: the dashboard's proxy (Next.js) gzips responses otherwise, holding events back until the stream ends.
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 def _poll(run_id: uuid.UUID, after: int) -> tuple[RunStatus | None, list[dict]]:

@@ -23,10 +23,16 @@ SECRETS="DATABASE_URL=DATABASE_URL:latest,VAULT_MASTER_KEY=VAULT_MASTER_KEY:late
 SECRETS+=",GOOGLE_LOGIN_CLIENT_ID=GOOGLE_LOGIN_CLIENT_ID:latest,GOOGLE_LOGIN_CLIENT_SECRET=GOOGLE_LOGIN_CLIENT_SECRET:latest"
 SECRETS+=",INITIAL_ADMIN_EMAIL=INITIAL_ADMIN_EMAIL:latest,INTERNAL_TASK_TOKEN=INTERNAL_TASK_TOKEN:latest"
 
-# The service URL is only known after the first deploy; later deploys pass it in for OAuth redirects.
+# Sign-in runs on the dashboard's origin once it exists (scripts/deploy_dashboard.sh); before that, on the API's.
+# Service URLs are only known after a first deploy.
+DASHBOARD_URL="$(gcloud run services describe outreach-dashboard --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>/dev/null || true)"
 URL="$(gcloud run services describe "$SERVICE" --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>/dev/null || true)"
 ENV_VARS="APP_MODE=dev,STORAGE_BACKEND=gcs,GCS_BUCKET=${BUCKET},AUTO_EVALS=true"
-[[ -n "$URL" ]] && ENV_VARS+=",PUBLIC_BASE_URL=${URL}"
+if [[ -n "$DASHBOARD_URL" ]]; then
+  ENV_VARS+=",PUBLIC_BASE_URL=${DASHBOARD_URL},POST_LOGIN_REDIRECT=/"
+elif [[ -n "$URL" ]]; then
+  ENV_VARS+=",PUBLIC_BASE_URL=${URL}"
+fi
 
 # Background jobs (discovery runs, verification) live in the process:
 #   --no-cpu-throttling  keeps CPU after the response is sent
