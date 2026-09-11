@@ -10,6 +10,7 @@ import pypdfium2
 from sqlalchemy.orm import Session
 
 from app import llm
+from app.storage import StorageError, get_storage
 
 MIN_TEXT_CHARS = 300  # below this a PDF is treated as scanned
 MAX_OCR_PAGES = 4
@@ -24,13 +25,13 @@ class ExtractionError(Exception):
     pass
 
 
-def _pdf_text(path: Path) -> str:
-    with pdfplumber.open(path) as pdf:
+def _pdf_text(data: bytes) -> str:
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
         return "\n".join((page.extract_text() or "") for page in pdf.pages).strip()
 
 
-def _docx_text(path: Path) -> str:
-    document = docx.Document(str(path))
+def _docx_text(data: bytes) -> str:
+    document = docx.Document(io.BytesIO(data))
     lines = [p.text for p in document.paragraphs]
     for table in document.tables:
         for row in table.rows:
@@ -38,8 +39,8 @@ def _docx_text(path: Path) -> str:
     return "\n".join(line for line in lines if line.strip()).strip()
 
 
-def _pdf_ocr(db: Session, path: Path) -> str:
-    pdf = pypdfium2.PdfDocument(str(path))
+def _pdf_ocr(db: Session, data: bytes) -> str:
+    pdf = pypdfium2.PdfDocument(data)
     try:
         pages = []
         for index in range(min(len(pdf), MAX_OCR_PAGES)):
@@ -60,17 +61,22 @@ def _pdf_ocr(db: Session, path: Path) -> str:
 
 def extract_text(db: Session, storage_path: str) -> tuple[str, str]:
     """Returns (text, method) where method is pdf_text | docx | vision_ocr."""
-    path = Path(storage_path)
-    if not path.exists():
-        raise ExtractionError(f"Resume file is missing on the server: {path.name}")
+    storage = get_storage()
+    name = Path(storage_path).name
+    if not storage.exists(storage_path):
+        raise ExtractionError(f"Resume file is missing on the server: {name}")
+    try:
+        data = storage.read(storage_path)
+    except StorageError as exc:
+        raise ExtractionError(str(exc))
 
-    suffix = path.suffix.lower()
+    suffix = Path(storage_path).suffix.lower()
     if suffix == ".docx":
-        text, method = _docx_text(path), "docx"
+        text, method = _docx_text(data), "docx"
     elif suffix == ".pdf":
-        text, method = _pdf_text(path), "pdf_text"
+        text, method = _pdf_text(data), "pdf_text"
         if len(text) < MIN_TEXT_CHARS:
-            text, method = _pdf_ocr(db, path), "vision_ocr"
+            text, method = _pdf_ocr(db, data), "vision_ocr"
     else:
         raise ExtractionError(f"Unsupported resume type '{suffix}'")
 

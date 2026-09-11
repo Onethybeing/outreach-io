@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+secrets/
+storage/
+example_cv/
+tests/
+evals/
+*.log

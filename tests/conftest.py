@@ -14,17 +14,24 @@ from app.auth import SESSION_COOKIE, sign_session
 from app.config import get_settings
 from app.db import engine, get_db
 from app.main import app
+from app.storage import get_storage
 from app.models import User, UserRole
 from app.vault_providers import PROVIDERS, ProviderSpec
 
 
 @pytest.fixture(autouse=True)
-def test_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
     settings = get_settings()
     monkeypatch.setattr(settings, "vault_master_key", Fernet.generate_key().decode())
     monkeypatch.setattr(settings, "session_secret", "test-session-secret-" + "x" * 32)
     monkeypatch.setattr(settings, "public_base_url", "http://testserver")
+    # Every test gets its own local file storage, so no test touches storage/ or a bucket.
+    monkeypatch.setattr(settings, "storage_backend", "local")
+    monkeypatch.setattr(settings, "local_storage_dir", str(tmp_path))
+    get_storage.cache_clear()
     vault.clear_cache()
+    yield
+    get_storage.cache_clear()
 
 
 @pytest.fixture

@@ -9,7 +9,6 @@ import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
-from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -20,10 +19,11 @@ from app.contacts.service import SENT, ActionError
 from app.db import SessionLocal
 from app.jobs import WorkerPool
 from app.models import Contact, DraftStatus, EmailDirection, EmailEvent, Resume, SendStatus, User
+from app.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
-OUTBOX_DIR = Path("storage/outbox")
+OUTBOX_PREFIX = "outbox"  # storage key prefix: storage/outbox/ locally, gs://<bucket>/outbox/ on Cloud Run
 READY = (SendStatus.none, SendStatus.failed)
 
 
@@ -47,7 +47,7 @@ def build_message(contact: Contact, sender: str, resume: Resume) -> EmailMessage
     message["Message-ID"] = make_msgid(domain=sender.split("@")[-1] or "localhost")
     message["X-Outreach-Contact-Id"] = str(contact.id)
     message.set_content(contact.draft_text)
-    data = Path(resume.storage_path).read_bytes()
+    data = get_storage().read(resume.storage_path)
     maintype, _, subtype = (mimetypes.guess_type(resume.filename)[0] or "application/octet-stream").partition("/")
     message.add_attachment(data, maintype=maintype, subtype=subtype, filename=resume.filename)
     return message
@@ -74,16 +74,15 @@ def send(db: Session, contact_id: uuid.UUID, user: User, force: bool = False) ->
     if get_settings().app_mode != "dev":
         raise ActionError(409, "Real sending is off until you explicitly approve it; only dev mode (.eml files) is available")
     resume = db.get(Resume, contact.cv_used_id)
-    if not Path(resume.storage_path).exists():
+    if not get_storage().exists(resume.storage_path):
         raise ActionError(400, f"The CV file to attach is missing on the server: {resume.filename}")
 
     contact.send_status = SendStatus.queued
     db.commit()
     try:
         message = build_message(contact, sender_address(db), resume)
-        OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
-        path = OUTBOX_DIR / f"{_now().strftime('%Y%m%dT%H%M%S')}-{contact.id}.eml"
-        path.write_bytes(bytes(message))
+        name = f"{_now().strftime('%Y%m%dT%H%M%S')}-{contact.id}.eml"
+        get_storage().save(f"{OUTBOX_PREFIX}/{name}", bytes(message), "message/rfc822")
     except Exception as exc:  # noqa: BLE001 — never leave a contact stuck in 'queued'
         logger.exception("Dev send for contact %s failed", contact_id)
         contact.send_status = SendStatus.failed
@@ -97,7 +96,7 @@ def send(db: Session, contact_id: uuid.UUID, user: User, force: bool = False) ->
         contact_id=contact.id, direction=EmailDirection.out, gmail_message_id=message["Message-ID"],
         snippet=f"{contact.draft_subject}\n\n{contact.draft_text[:300]}",
     ))
-    audit.record(db, user, "emails.send", "contact", contact.id, {"mode": "dev", "file": path.name, "force": force})
+    audit.record(db, user, "emails.send", "contact", contact.id, {"mode": "dev", "file": name, "force": force})
     db.commit()
     return contact
 

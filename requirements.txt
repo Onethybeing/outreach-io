@@ -22,6 +22,9 @@ langfuse>=4.0
 google-auth-oauthlib>=1.2
 google-api-python-client>=2.150
 
+# file storage on Cloud Run
+google-cloud-storage>=2.18
+
 # resume parsing
 pdfplumber>=0.11
 pypdfium2>=4.30

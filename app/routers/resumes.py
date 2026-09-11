@@ -12,10 +12,10 @@ from app.auth import require
 from app.db import get_db
 from app.models import Resume, User
 from app.schemas import ResumeOut
+from app.storage import get_storage
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
-STORAGE_DIR = Path("storage/resumes")
 ALLOWED_SUFFIXES = {".pdf", ".docx"}
 
 
@@ -37,16 +37,13 @@ def upload_resume(
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(400, f"Unsupported file type '{suffix}'. Use PDF or DOCX.")
 
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    stored_name = f"{uuid.uuid4()}{suffix}"
-    dest = STORAGE_DIR / stored_name
-    dest.write_bytes(file.file.read())
+    storage = get_storage()
+    key = f"resumes/{uuid.uuid4()}{suffix}"
+    content_type = "application/pdf" if suffix == ".pdf" else \
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    storage.save(key, file.file.read(), content_type)
 
-    resume = Resume(
-        filename=file.filename or stored_name,
-        storage_path=str(dest),
-        status="uploaded",
-    )
+    resume = Resume(filename=file.filename or key.rsplit("/", 1)[-1], storage_path=key, status="uploaded")
     try:
         db.add(resume)
         db.flush()
@@ -54,7 +51,7 @@ def upload_resume(
         db.commit()
     except Exception:
         db.rollback()
-        dest.unlink(missing_ok=True)
+        storage.delete(key)  # don't leave an orphan file when the row wasn't saved
         raise
     db.refresh(resume)
     return resume

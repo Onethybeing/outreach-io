@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     internal_task_token: str = ""
     # LLM-as-judge evals after each discovery run and draft (extra Groq tokens). PLAN.md §11.
     auto_evals: bool = True
+    # File storage for CVs and dev-mode .eml files: "local" (development) or "gcs" (Cloud Run,
+    # whose disk is wiped on every restart).
+    storage_backend: str = "local"
+    local_storage_dir: str = "storage"
+    gcs_bucket: str = ""
 
     # Provider keys: read only to seed the vault on first start.
     groq_api_key: str = ""
