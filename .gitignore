@@ -14,3 +14,5 @@ build/
 *.log
 example_cv/
 .DS_Store
+secrets/
+client_secret_*.json
