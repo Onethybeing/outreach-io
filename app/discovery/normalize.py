@@ -36,10 +36,12 @@ def company_key(name: str | None) -> str:
 
 # Company name after "at"/"@", up to a separator. A dash only separates when spaced
 # ("Beta Labs - hiring"), so hyphenated names ("Hugging-Face") stay whole.
-_TITLE_COMPANY = re.compile(r"(?:\bat\b|@)\s*(.+?)(?=\s[-–—]\s|[|,·()]|$)", re.I)
+_TITLE_COMPANY = re.compile(r"(?:\b(?P<at>at)\b|(?P<sign>@))\s*(?P<company>.+?)(?=\s[-–—]\s|[|,·()]|$)", re.I)
 _GENERIC_SUFFIXES = {
     "ai", "labs", "lab", "hq", "io", "app", "tech", "technologies", "technology", "health",
     "software", "systems", "group", "global", "computing", "inc", "co",
+    # web endings, so "monday.com" / "Notion.so" match "Monday" / "Notion"
+    "com", "so", "dev", "net", "org", "xyz", "sh", "gg", "ly",
 }
 
 
@@ -58,12 +60,17 @@ def _same_company(named: str, target: str) -> bool:
 def title_names_other_company(title: str | None, startup_name: str, website: str | None = None) -> bool:
     """True when a title like 'Founder at Sapling Says' clearly names a company other than the startup.
 
-    Reads only the first 'at X' / '@X'. No company in the title → False (can't tell, so keep).
+    Reads only the first 'at X' / '@X'. Deliberately conservative — employment is verified later,
+    so a wrong drop costs more than a wrong keep: after a plain "at", only a capitalized word counts
+    as a company ("agents at scale" is a phrase, not a company). No company → False.
     """
     match = _TITLE_COMPANY.search(title or "")
     if not match:
         return False
-    named = company_key(match.group(1))
+    company = match.group("company").strip()
+    if match.group("at") and not company[:1].isupper():
+        return False
+    named = company_key(company)
     if not named:
         return False
     targets = [k for k in (company_key(startup_name), company_key(website_domain(website).split(".")[0])) if k]

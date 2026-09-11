@@ -361,8 +361,39 @@ def test_stale_running_run_is_failed_recent_one_kept(db, resume):
     assert graph.fail_stale_runs(db) >= 1
     db.refresh(old)
     db.refresh(fresh)
-    assert old.status == RunStatus.failed and "restarted" in old.error
+    assert old.status == RunStatus.failed and "stopped responding" in old.error
     assert fresh.status == RunStatus.running
+
+
+def test_startup_fails_every_interrupted_run_even_with_fresh_heartbeat(db, resume):
+    other = Resume(filename="other.pdf", storage_path="x.pdf")
+    db.add(other)
+    db.commit()
+    running = _make_run(db, resume, status=RunStatus.running)
+    running.heartbeat_at = datetime.now(timezone.utc)  # alive 0s ago, but its thread died with the process
+    queued = _make_run(db, other, status=RunStatus.pending)
+    db.commit()
+    assert graph.fail_interrupted_runs(db) >= 2
+    for run in (running, queued):
+        db.refresh(run)
+        assert run.status == RunStatus.failed and "restarted" in run.error
+
+
+def test_submit_run_uses_daemon_workers(monkeypatch):
+    import threading
+
+    done = threading.Event()
+    seen = {}
+
+    def fake_run(run_id):
+        seen.update(run_id=run_id, daemon=threading.current_thread().daemon)
+        done.set()
+
+    monkeypatch.setattr(graph, "run_in_background", fake_run)
+    run_id = uuid.uuid4()
+    graph.submit_run(run_id)
+    assert done.wait(10)
+    assert seen == {"run_id": run_id, "daemon": True}  # never blocks server shutdown
 
 
 # --- API -------------------------------------------------------------------------
@@ -468,6 +499,10 @@ def test_linkedin_normalization(url, expected):
     ("Recruiter at Hippocratic", "Hippocratic AI", None, False),
     ("Co-founder at Hugging-Face", "Hugging Face", None, False),  # hyphen inside the name
     ("Founder at Acme – building agents", "Acme", None, False),  # spaced dash separates
+    ("Co-founder & CEO at monday.com", "Monday", "https://monday.com", False),  # web ending
+    ("Founder at Notion.so", "Notion", None, False),
+    ("CTO | Building AI agents at scale", "Acme", None, False),  # lowercase phrase, not a company
+    ("CTO @Other", "Acme", None, True),
 ])
 def test_title_names_other_company(title, startup, website, other):
     assert title_names_other_company(title, startup, website) is other

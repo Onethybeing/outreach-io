@@ -6,9 +6,10 @@ Every step writes a RunEvent (the dashboard's live progress feed) and a Langfuse
 
 import json
 import logging
+import queue
+import threading
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
@@ -474,29 +475,52 @@ def run_in_background(run_id: uuid.UUID) -> None:
         logger.exception("Discovery run %s crashed before it could record a failure", run_id)
 
 
-# Own pool, so minutes-long runs never occupy the web server's request threads. Extra runs queue
-# as 'pending'; a run queued past STALE_AFTER is failed by fail_stale_runs and skipped when reached.
-_run_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="discovery")
+# Own workers, so minutes-long runs never occupy the web server's request threads. Daemon threads:
+# stopping the server must not wait for runs to finish — interrupted runs are failed at next startup
+# (fail_interrupted_runs). Extra runs queue as 'pending'.
+RUN_WORKERS = 4
+_run_queue: "queue.Queue[uuid.UUID]" = queue.Queue()
+_workers: list[threading.Thread] = []
+_workers_lock = threading.Lock()
+
+
+def _worker() -> None:
+    while True:
+        run_in_background(_run_queue.get())
 
 
 def submit_run(run_id: uuid.UUID) -> None:
-    _run_pool.submit(run_in_background, run_id)
+    with _workers_lock:
+        while len(_workers) < RUN_WORKERS:
+            thread = threading.Thread(target=_worker, name=f"discovery-{len(_workers)}", daemon=True)
+            thread.start()
+            _workers.append(thread)
+    _run_queue.put(run_id)
 
 
-def fail_stale_runs(db: Session) -> int:
-    """Runs whose worker died (restart, crash) would otherwise show 'running' forever."""
+def _fail_active_runs(db: Session, message: str, only_stale: bool) -> int:
     cutoff = _now() - STALE_AFTER
-    stale = list(db.scalars(
-        select(Run).where(Run.status.in_([RunStatus.pending, RunStatus.running]))
-    ))
+    active = list(db.scalars(select(Run).where(Run.status.in_([RunStatus.pending, RunStatus.running]))))
     count = 0
-    for run in stale:
-        if (run.heartbeat_at or run.created_at) >= cutoff:
+    for run in active:
+        if only_stale and (run.heartbeat_at or run.created_at) >= cutoff:
             continue
-        run.status, run.finished_at = RunStatus.failed, _now()
-        run.error = "Stopped: the server restarted or the run stopped responding"
+        run.status, run.finished_at, run.error = RunStatus.failed, _now(), message
         db.execute(delete(Candidate).where(Candidate.run_id == run.id))
-        db.add(RunEvent(run_id=run.id, node="agent", kind="failed", message=run.error, created_at=_now()))
+        db.add(RunEvent(run_id=run.id, node="agent", kind="failed", message=message, created_at=_now()))
         count += 1
     db.commit()
     return count
+
+
+def fail_stale_runs(db: Session) -> int:
+    """Runs whose worker died without the server restarting would otherwise show 'running' forever."""
+    return _fail_active_runs(db, "Stopped: the run stopped responding", only_stale=True)
+
+
+def fail_interrupted_runs(db: Session) -> int:
+    """At startup every pending/running run is dead: its worker thread lived in the old process.
+
+    Assumes one app instance (Cloud Run max-instances=1) until runs move to an external queue.
+    """
+    return _fail_active_runs(db, "Stopped: the server restarted during this run", only_stale=False)
