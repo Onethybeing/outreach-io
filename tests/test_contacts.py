@@ -46,9 +46,13 @@ def world(db, monkeypatch):
 
     state = {"profile": POWERFUL, "org_calls": 0, "profile_calls": 0, "email": apollo.EmailResult(True, "simon@powerfulmedical.com", "Found by Apollo")}
 
+    state["org_definitive"] = True
+
     def fake_enrich(db_, website, name=None):
         state["org_calls"] += 1
-        return {"name": "Powerful Medical", "linkedin_url": "http://www.linkedin.com/company/powerful-medical"}
+        if not state["org_definitive"]:
+            return apollo.OrgLookup(None, definitive=False)
+        return apollo.OrgLookup({"name": "Powerful Medical", "linkedin_url": "http://www.linkedin.com/company/powerful-medical", "website_url": None}, True)
 
     def fake_profile(db_, url):
         state["profile_calls"] += 1
@@ -211,7 +215,7 @@ def test_tiebreak_uses_cross_check_prompt(db, world, operator, monkeypatch):
 
     prompts.seed_defaults(db)
     world["state"]["profile"] = Profile("x", "PM Health", None, None, "CTO")
-    monkeypatch.setattr(apollo, "enrich_org", lambda db_, w, n=None: None)  # no company page known
+    monkeypatch.setattr(apollo, "enrich_org", lambda db_, w, n=None: apollo.OrgLookup(None, True))  # no company page
     seen = {}
 
     def fake_llm(db_, model, prompt, temperature, max_tokens=4096, **kwargs):
@@ -331,6 +335,60 @@ def test_bulk_job_stops_when_provider_unavailable(db, world, operator):
     assert statuses.count(EmailLookupStatus.failed) == 1 and statuses.count(EmailLookupStatus.not_run) == 1
 
 
+def test_unexpected_lookup_error_never_leaves_status_running(db, world, operator):
+    world["state"]["email"] = RuntimeError("boom")
+    contact_id = _verified_contact(operator, world)
+    response = operator.post(f"/contacts/{contact_id}/email/lookup")
+    assert response.status_code == 502 and "unexpectedly" in response.json()["detail"]
+    assert operator.get(f"/contacts/{contact_id}").json()["email_lookup_status"] == "failed"
+    assert operator.put(f"/contacts/{contact_id}/email", json={"email": "a@b.co"}).status_code == 200
+
+
+def test_missing_apollo_key_is_provider_unavailable(db, monkeypatch):
+    from app import vault
+
+    def missing(db_, provider):
+        raise vault.VaultError("apollo is not configured")
+
+    monkeypatch.setattr(vault, "get_credential", missing)
+    with pytest.raises(apollo.ProviderUnavailable, match="not configured"):
+        apollo.find_email(db, "Jane", "https://www.linkedin.com/in/jane", "acme.com")
+
+
+def test_empty_bulk_selection_means_nothing(world, operator, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(service, "submit_bulk_lookup", lambda ids, uid: submitted.append(ids))
+    _verified_contact(operator, world)
+    body = operator.post("/contacts/email/lookup-bulk", json={"dry_run": False, "contact_ids": []}).json()
+    assert body["eligible"] == 0 and body["queued"] is False and submitted == []
+
+
+def test_transient_company_lookup_is_retried_next_time(db, world, operator):
+    world["state"]["org_definitive"] = False
+    _approve(operator, world["candidates"][0])
+    db.refresh(world["startup"])
+    assert world["startup"].company_enriched_at is None
+    world["state"]["org_definitive"] = True
+    _approve(operator, world["candidates"][1])
+    db.refresh(world["startup"])
+    assert world["state"]["org_calls"] == 2 and world["startup"].company_enriched_at is not None
+
+
+def test_update_waits_for_running_email_lookup(db, world, operator):
+    first = world["candidates"][0]
+    contact = db.get(Contact, uuid.UUID(_approve(operator, first)["id"]))
+    contact.email_lookup_status = EmailLookupStatus.running
+    db.commit()
+    later_run = Run(resume_id=world["resume"].id, status=RunStatus.completed)
+    db.add(later_run)
+    db.flush()
+    again = Candidate(run_id=later_run.id, startup_id=world["startup"].id, name="Person 0", linkedin_url=first.linkedin_url)
+    db.add(again)
+    db.commit()
+    response = operator.post(f"/candidates/{again.id}/update-contact")
+    assert response.status_code == 409 and "email lookup" in response.json()["detail"]
+
+
 def test_email_provider_setting_is_admin_only(make_user, login):
     assert login(make_user(UserRole.operator)).put("/settings/email-provider", json={"provider": "apollo"}).status_code == 403
     admin = login(make_user(UserRole.admin))
@@ -370,16 +428,26 @@ def test_apollo_enrich_by_name_only_trusts_matching_company(db, monkeypatch):
     monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
     seen = []
 
+    status = {"code": 200}
+
     def fake_get(url, params=None, **kwargs):
         seen.append(params)
+        if status["code"] != 200:
+            return httpx.Response(status["code"], json={})
         return httpx.Response(200, json={"organization": {"name": "Powerful Medical", "linkedin_url": "http://www.linkedin.com/company/powerful-medical", "website_url": "http://www.powerfulmedical.com"}})
 
     monkeypatch.setattr(apollo.httpx, "get", fake_get)
-    assert apollo.enrich_org(db, "https://powerfulmedical.com/x", "ignored")["name"] == "Powerful Medical"
-    assert apollo.enrich_org(db, None, "Powerful Medical")["website_url"] == "http://www.powerfulmedical.com"
-    assert apollo.enrich_org(db, None, "Powerful Medicine Labs") is None  # same-name lookalike not trusted
-    assert apollo.enrich_org(db, None, None) is None
+    assert apollo.enrich_org(db, "https://powerfulmedical.com/x", "ignored").org["name"] == "Powerful Medical"
+    assert apollo.enrich_org(db, None, "Powerful Medical").org["website_url"] == "http://www.powerfulmedical.com"
+    lookalike = apollo.enrich_org(db, None, "Powerful Medicine Labs")  # same-name lookalike not trusted
+    assert lookalike.org is None and lookalike.definitive
+    assert apollo.enrich_org(db, None, None).org is None
     assert seen == [{"domain": "powerfulmedical.com"}, {"name": "Powerful Medical"}, {"name": "Powerful Medicine Labs"}]
+
+    status["code"] = 429
+    assert apollo.enrich_org(db, "powerfulmedical.com").definitive is False  # retry later
+    status["code"] = 422
+    assert apollo.enrich_org(db, "powerfulmedical.com").definitive is True  # Apollo answered: no match
 
 
 def test_brightdata_scrape_trigger_poll_download(db, monkeypatch):

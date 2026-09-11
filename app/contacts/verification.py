@@ -78,11 +78,18 @@ class State(TypedDict, total=False):
 def build_graph(db: Session, contact: Contact, startup: Startup):
     def enrich_company(state: State) -> dict:
         if startup.company_enriched_at is None:
-            org = apollo.enrich_org(db, startup.website, startup.name) or {}
-            startup.linkedin_url = org.get("linkedin_url") or startup.linkedin_url
-            startup.website = startup.website or org.get("website_url")  # email lookups need a domain later
-            startup.company_enriched_at = _now()
-            db.flush()
+            # Lock the startup row, re-check, and commit straight away: parallel verifications for the
+            # same startup wait a few seconds and reuse the result, instead of each paying for Apollo
+            # and holding the lock through a minutes-long scrape.
+            db.refresh(startup, with_for_update=True)
+            if startup.company_enriched_at is None:
+                lookup = apollo.enrich_org(db, startup.website, startup.name)
+                org = lookup.org or {}
+                startup.linkedin_url = org.get("linkedin_url") or startup.linkedin_url
+                startup.website = startup.website or org.get("website_url")  # email lookups need a domain later
+                if lookup.definitive:  # a transient Apollo problem must not block future attempts
+                    startup.company_enriched_at = _now()
+            db.commit()
         return {"company_slug": linkedin_company_slug(startup.linkedin_url)}
 
     def scrape_profile(state: State) -> dict:

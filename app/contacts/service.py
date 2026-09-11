@@ -1,5 +1,6 @@
 """Human-gated contact actions (PLAN.md §5): candidate decisions, email lookup, manual email."""
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from app.models import (
     AppSetting, Candidate, CandidateStatus, Contact, DraftStatus, EmailLookupStatus, Run, RunStatus,
     SendStatus, Startup, User, VerificationStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 EMAIL_PROVIDERS = {"apollo": apollo.find_email}
 DEFAULT_EMAIL_PROVIDER = "apollo"
@@ -113,6 +116,9 @@ def update_existing(db: Session, candidate_id: uuid.UUID, user: User) -> Contact
         raise ActionError(409, "No existing contact for this person — approve instead")
     if contact.verification_status in (VerificationStatus.queued, VerificationStatus.running):
         raise ActionError(409, "This contact is being verified right now — try again when it finishes")
+    if contact.email_lookup_status == EmailLookupStatus.running:
+        # Otherwise the lookup would finish after the reset and restore the old company's email.
+        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
     contact.startup_id, contact.run_id = candidate.startup_id, run.id
     contact.resume_id = contact.cv_used_id = run.resume_id
     contact.name, contact.title = candidate.name, candidate.title
@@ -188,13 +194,20 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
     startup = db.get(Startup, contact.startup_id)
     try:
         result = EMAIL_PROVIDERS[provider](db, contact.name, contact.linkedin_url, startup.website)
-    except (apollo.ProviderUnavailable, apollo.EmailLookupError) as exc:
-        contact.email_lookup_status, contact.email_lookup_note = EmailLookupStatus.failed, str(exc)
-        contact.email_looked_up_at = _now()
-        audit.record(db, user, "contacts.email_lookup", "contact", contact.id, {"provider": provider, "error": str(exc)})
-        db.commit()
+    except Exception as exc:  # noqa: BLE001 — whatever happens, never leave the status stuck on 'running'
+        db.rollback()
         unavailable = isinstance(exc, apollo.ProviderUnavailable)
-        raise ActionError(400 if unavailable else 502, str(exc), provider_unavailable=unavailable)
+        if isinstance(exc, (apollo.ProviderUnavailable, apollo.EmailLookupError)):
+            message = str(exc)
+        else:
+            logger.exception("Email lookup for contact %s crashed", contact_id)
+            message = f"Email lookup failed unexpectedly ({type(exc).__name__}) — see server logs"
+        contact = _contact(db, contact_id, lock=True)
+        contact.email_lookup_status, contact.email_lookup_note = EmailLookupStatus.failed, message
+        contact.email_looked_up_at = _now()
+        audit.record(db, user, "contacts.email_lookup", "contact", contact.id, {"provider": provider, "error": message})
+        db.commit()
+        raise ActionError(400 if unavailable else 502, message, provider_unavailable=unavailable)
 
     contact.email_looked_up_at, contact.email_lookup_note = _now(), result.note
     if result.found:
@@ -229,7 +242,9 @@ def bulk_lookup_eligible(db: Session, contact_ids: list[uuid.UUID] | None = None
         Contact.email_lookup_status.in_([EmailLookupStatus.not_run, EmailLookupStatus.failed]),
         Contact.do_not_contact.is_(False),
     )
-    if contact_ids:
+    if contact_ids is not None:
+        if not contact_ids:
+            return []  # an empty selection means nothing, never "everyone"
         query = query.where(Contact.id.in_(contact_ids))
     return list(db.scalars(query))
 
