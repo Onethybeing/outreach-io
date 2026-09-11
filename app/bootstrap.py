@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit, prompts, vault
+from app.discovery import graph as discovery
 from app.config import Settings
 from app.models import User, UserRole
 
@@ -55,3 +56,5 @@ def run(db: Session, settings: Settings) -> None:
         logger.info("Seeded default prompts: %s", ", ".join(seeded))
     if seeded := vault.seed_from_env(db, settings):
         logger.info("Imported keys from .env into the vault: %s", ", ".join(seeded))
+    if stale := discovery.fail_stale_runs(db):
+        logger.warning("Marked %d interrupted discovery run(s) as failed", stale)

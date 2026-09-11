@@ -63,7 +63,7 @@ takes effect on the next node call without a redeploy.
 
 | Node | Does |
 |---|---|
-| `ingest_resume` | Extract text via `pdfplumber`/`python-docx` (text-layer PDFs). If extracted text is too short/garbled → fallback OCR on rendered page images using a vision-capable Groq model (Tesseract locally if that proves unreliable). |
+| `ingest_resume` | Extract text via `pdfplumber`/`python-docx` (text-layer PDFs). If a PDF yields under 300 characters → OCR on rendered page images with `qwen/qwen3.8-27b` on Groq (checked: transcribes cleanly). Text is cached on the resume. |
 | `parse_resume` | LLM extracts structured profile: role, seniority, skills, domain(s), years of experience, target titles. |
 | `build_search_queries` | Turns profile into Tavily query set. |
 | `discover_startups` | Tavily web search, top `num_startups`, LLM-filtered for domain relevance, deduped by domain/website. |
@@ -152,6 +152,23 @@ contacts  + draft_prompt_version_id -> prompts.id, approved_by, draft_approved_b
             do_not_contact bool default false   -- set on unsubscribe, blocks all sends
 runs      + started_by -> users.id, prompt_versions jsonb   -- snapshot of active prompt ids at run start
 email_events + classification enum(reply, bounce, out_of_office, unsubscribe)
+```
+
+### Added in Phase 3 (discovery)
+
+```
+candidates(id, run_id, startup_id, name, title, linkedin_url (normalized), reason,
+           existing_contact_id -> contacts.id, status enum(pending, approved, rejected, reused, updated),
+           decided_by, decided_at, created_at)
+  -- UNIQUE(run_id, linkedin_url). Proposed people live here; a Contact is created (or reused)
+  -- only on approval, so contacts.linkedin_url can stay unique.
+
+run_events(id bigint, run_id, node, kind (started|completed|info|warning|failed), message, data jsonb, created_at)
+  -- the "agent thinking" feed; streamed over SSE at GET /runs/{id}/stream
+
+resumes   + extracted_text, extraction_method (pdf_text | docx | vision_ocr)
+runs      + usage jsonb, error, started_at, finished_at, heartbeat_at, langfuse_trace_url
+startups  + relevance
 ```
 
 `linkedin_url` unique constraint powers duplicate detection (§5) and prevents double-emailing the
@@ -349,7 +366,9 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 
 ## 13. Deployment (GCP account `sourav.jhinjha@gmail.com`)
 
-- FastAPI + LangGraph runtime → **Cloud Run**
+- FastAPI + LangGraph runtime → **Cloud Run**. Discovery runs execute in the background after the
+  request returns, so the service needs **CPU always allocated** (otherwise Cloud Run throttles it
+  and runs stall), or runs move to Cloud Tasks / Cloud Run Jobs.
 - Dashboard → **Cloud Run**
 - Bootstrap secrets (`DATABASE_URL`, `VAULT_MASTER_KEY`, session secret, login OAuth client) →
   **Secret Manager**
@@ -403,6 +422,16 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 20. Gmail refresh token expired or revoked (7-day limit while the Google app is in Testing) →
     `send_email` and `track_replies` stop with a "Gmail sign-in expired" banner instead of
     failing silently; sends stay queued until it's renewed.
+21. Model returns a LinkedIn link that search never returned → dropped (can't be trusted).
+22. Search matches a lookalike company ("Founder at Sapling Says" for Sapling.ai) → dropped by a
+    title check in code, since the prompt rule alone proved unreliable in a live test. Subtler cases
+    are left to Apollo verification in Phase 4.
+23. Same resume run again → startups found in earlier runs are excluded, so a re-run finds new ones.
+24. Server restarts mid-run → runs with no progress heartbeat for 10 minutes are marked failed
+    (at startup and before starting a new run), instead of showing "running" forever.
+25. Groq's 8k tokens/minute limit → calls wait for the reset and show "waiting Ns for the Groq rate
+    limit" in the progress feed; a run on this tier takes a minute or two.
+26. Two runs on the same resume at once → the second is refused (409) to avoid double spend.
 
 ---
 
@@ -411,8 +440,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 1. ✅ Repo scaffold + Postgres schema + FastAPI skeleton + Neon connection.
 2. ✅ Auth + RBAC + audit log + API vault + prompt store (backend). Done before the agent so
    every node reads keys and prompts from the vault/store from day one.
-3. `discovery_graph` (resume ingest → profile → startups → KDMs), tested via API + Langfuse.
-4. Postgres dedupe + `contact_graph` verify/cross-check nodes.
+3. ✅ `discovery_graph` (resume ingest → profile → startups → KDMs → dedupe), tested via API + Langfuse.
+4. Candidate approve / reuse / update → contacts, and `contact_graph` verify/cross-check nodes.
 5. Draft generation + dev-mode send (`.eml`, no real send).
 6. Dashboard: Library, Run Agent, Candidates, Contacts, Settings (Vault / Prompts / Users / Mode /
    Audit Log).

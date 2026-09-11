@@ -18,6 +18,17 @@ Resume-to-outreach LangGraph agent. See [PLAN.md](./PLAN.md) for the full design
 | | `POST /prompts/{node}/versions`, `/activate/{version}`, `/reset`, `/test` | admin |
 | Resumes | `GET /resumes` (all roles), `POST /resumes` (admin, operator) | |
 
+**Phase 3** — discovery graph (`app/discovery/`): resume → profile → search queries → startups →
+decision-makers → dedupe against contacts.
+
+| Route | What | Who |
+|---|---|---|
+| `POST /runs` `{resume_id, num_startups 1-20, num_kdms_per_company 1-10}` | Start a run in the background (202) | admin, operator |
+| `GET /runs`, `GET /runs/{id}` | Run status, usage, Langfuse trace link, startups, candidates | all roles |
+| `GET /runs/{id}/events?after=` | Progress feed as JSON | all roles |
+| `GET /runs/{id}/stream` | Same feed as server-sent events, ends with `event: end` | all roles |
+| `GET /candidates?status=&run_id=` | Proposed people across runs, with the CV each was found for | all roles |
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).

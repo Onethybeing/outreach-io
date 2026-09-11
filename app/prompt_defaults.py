@@ -83,12 +83,13 @@ early-to-growth-stage startups in the candidate's domains that plausibly need th
     "discover_startups": NodeContract(
         description="Picks the most relevant startups from search results.",
         required=("candidate_profile", "search_results", "num_startups"),
-        optional=(),
+        optional=("exclude_startups",),
         sample={
             "candidate_profile": SAMPLE_PROFILE,
             "search_results": '[{"title": "Acme Vector raises $12M Series A", "url": "https://example.com/acme", '
             '"content": "Acme Vector builds retrieval infrastructure for LLM apps and is growing its ML team."}]',
             "num_startups": "5",
+            "exclude_startups": "Example Labs, Sample AI",
         },
         template="""You pick startups that fit a job candidate, from web search results.
 
@@ -100,7 +101,8 @@ Search results (JSON):
 
 Choose up to {{ num_startups }} distinct startups (not large public companies, not recruiters or
 job boards) whose product or domain matches the candidate and who plausibly hire their target roles.
-
+{% if exclude_startups %}Already found in earlier runs, do not pick again: {{ exclude_startups }}
+{% endif %}
 Return only a JSON object:
 {"startups": [{"name": "", "website": "", "domain": "", "description": "one sentence",
 "relevance": 0.0, "source_url": ""}]}
@@ -129,11 +131,21 @@ Search results (JSON):
 {{ search_results }}
 
 Pick up to {{ num_kdms }} people, preferring in order: founders/CEO, CTO or relevant engineering
-leader, head of talent/HR/recruiting, hiring manager for the role. Only include people the results
-show working at {{ startup_name }}, with a LinkedIn profile URL (linkedin.com/in/...).
+leader, head of talent/HR/recruiting, hiring manager for the role.
+
+Rules:
+- Only include people the results show working at {{ startup_name }}, with a LinkedIn profile URL
+  (linkedin.com/in/...) copied exactly from the results.
+- A different company with a similar name is not a match (e.g. "Nova Analytics" is not
+  "Nova Labs", "Orbit Inc" is not "Orbit Robotics"). If the result's company isn't clearly
+  {{ startup_name }}, skip the person.
+- Use the title exactly as it appears in the result. If the result shows no title, use null.
+  Never guess or write "inferred" / "likely".
+- Skip people whose shown title is not a hiring decision-maker (e.g. individual-contributor
+  engineers, interns, advisors, former employees). Returning fewer people is better than weak picks.
 
 Return only a JSON object:
-{"people": [{"name": "", "title": "", "linkedin_url": "", "why": "short reason"}]}""",
+{"people": [{"name": "", "title": "", "linkedin_url": "", "why": "which result shows their role"}]}""",
         model=HEAVY_MODEL,
         temperature=0.0,
     ),

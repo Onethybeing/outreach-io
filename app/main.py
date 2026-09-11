@@ -13,7 +13,7 @@ from app import bootstrap
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.prompts import PromptError
-from app.routers import audit_log, auth, prompts, resumes, users, vault
+from app.routers import audit_log, auth, prompts, resumes, runs, users, vault
 from app.schemas import HealthOut
 from app.vault import VaultError
 
@@ -33,7 +33,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="outreach-io", lifespan=lifespan)
 
-for router in (auth.router, users.router, audit_log.router, vault.router, prompts.router, resumes.router):
+for router in (
+    auth.router, users.router, audit_log.router, vault.router, prompts.router, resumes.router,
+    runs.router, runs.candidates_router,
+):
     app.include_router(router)
 
 
