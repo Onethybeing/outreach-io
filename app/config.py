@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://user:password@localhost/outreach_io"
 
+    groq_api_key: str = ""
     anthropic_api_key: str = ""
     tavily_api_key: str = ""
     apollo_api_key: str = ""
