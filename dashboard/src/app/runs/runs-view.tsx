@@ -157,6 +157,9 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
       if (event instanceof MessageEvent && event.data) {
         source.close()
         setStream("lost")
+      } else if (source.readyState === EventSource.CLOSED) {
+        // EventSource gives up for good on a non-200 (expired session, 403, proxy error) — say so.
+        setStream("lost")
       }
     })
     source.onopen = () => setStream("live")
@@ -215,7 +218,7 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
             </div>
           )}
           <div className="max-h-80 overflow-y-auto rounded-md border bg-muted/40 p-2 font-mono text-xs">
-            {events.length === 0 && (
+            {events.length === 0 && stream !== "lost" && (
               <p className="text-muted-foreground">{stream === "connecting" ? "Connecting…" : "Waiting for the agent…"}</p>
             )}
             {events.map((e) => (

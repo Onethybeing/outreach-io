@@ -109,7 +109,16 @@ export function DataTable<T>({
           {search && (
             <div className="relative">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={globalFilter} onChange={(e) => setGlobalFilter(e.target.value)} placeholder={search} className="h-8 w-64 pl-8" />
+              <Input
+                value={globalFilter}
+                onChange={(e) => {
+                  setGlobalFilter(e.target.value)
+                  // Clear the selection: rows the search hides must never end up in a bulk action.
+                  if (Object.keys(selection).length) onRowSelectionChange?.({})
+                }}
+                placeholder={search}
+                className="h-8 w-64 pl-8"
+              />
             </div>
           )}
           {toolbar}

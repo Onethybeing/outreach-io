@@ -33,8 +33,12 @@ export function useApi<T>(path: string | null) {
   }, [path, tick])
 
   const reload = useCallback(() => setTick((t) => t + 1), [])
+  /** `forPath` guards against a slow request landing after the caller switched to another path. */
   const mutate = useCallback(
-    (update: (data: T) => T) => setState((prev) => (prev.data === undefined ? prev : { ...prev, data: update(prev.data) })),
+    (update: (data: T) => T, forPath?: string) =>
+      setState((prev) =>
+        prev.data === undefined || (forPath !== undefined && prev.path !== forPath) ? prev : { ...prev, data: update(prev.data) },
+      ),
     [],
   )
 

@@ -2,7 +2,7 @@
 
 import type { ColumnDef, RowSelectionState } from "@tanstack/react-table"
 import { EllipsisIcon, ExternalLinkIcon, Loader2Icon } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { useSession } from "@/components/app-shell"
@@ -76,11 +76,14 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
     return () => clearInterval(timer)
   }, [anyBusy, watching, reload])
 
+  const watchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const watchForAWhile = useCallback(() => {
     // Queued bulk jobs may not have touched any row yet, so keep refreshing for a minute.
     setWatching(true)
-    setTimeout(() => setWatching(false), 60_000)
+    if (watchTimer.current) clearTimeout(watchTimer.current) // a later job extends the window, never cuts it short
+    watchTimer.current = setTimeout(() => setWatching(false), 60_000)
   }, [])
+  useEffect(() => () => void (watchTimer.current && clearTimeout(watchTimer.current)), [])
 
   const ask = useCallback((next: Confirm) => {
     setConfirm(next)

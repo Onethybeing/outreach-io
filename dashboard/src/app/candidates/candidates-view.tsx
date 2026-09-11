@@ -121,8 +121,9 @@ export function CandidatesView({ initialRunId }: { initialRunId?: string }) {
     if (!results) return
     const failed = results.filter((r) => !r.ok)
     const ok = results.length - failed.length
-    if (ok) toast.success(`${ok} ${action === "approve" ? "approved" : "rejected"}`)
-    if (failed.length) toast.error(`${failed.length} couldn't be ${action}d: ${failed[0].error}`)
+    const past = action === "approve" ? "approved" : "rejected"
+    if (ok) toast.success(`${ok} ${past}`)
+    if (failed.length) toast.error(`${failed.length} couldn't be ${past}: ${failed[0].error}`)
     setSelection({})
     reload()
   }

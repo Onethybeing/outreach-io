@@ -32,7 +32,8 @@ export default function StatsPage() {
   async function refresh() {
     // fresh=true skips the API's one-minute cache.
     const result = await run("refresh", () => api<Stats>(`${path}&fresh=true`))
-    if (result) stats.mutate(() => result)
+    // Dropped if the filters changed while it was loading, so the numbers always match what's on screen.
+    if (result) stats.mutate(() => result, path)
   }
 
   const data = stats.data

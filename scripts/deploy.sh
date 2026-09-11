@@ -25,7 +25,20 @@ SECRETS+=",INITIAL_ADMIN_EMAIL=INITIAL_ADMIN_EMAIL:latest,INTERNAL_TASK_TOKEN=IN
 
 # Sign-in runs on the dashboard's origin once it exists (scripts/deploy_dashboard.sh); before that, on the API's.
 # Service URLs are only known after a first deploy.
-DASHBOARD_URL="$(gcloud run services describe outreach-dashboard --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>/dev/null || true)"
+# --set-env-vars replaces the whole set, so guessing "no dashboard" on a lookup error would quietly
+# break sign-in: only a genuine "not found" is treated as "not deployed yet".
+DASHBOARD_SERVICE="${DASHBOARD_SERVICE:-outreach-dashboard}"
+LOOKUP_ERR="$(mktemp)"
+trap 'rm -f "$LOOKUP_ERR"' EXIT
+if DASHBOARD_URL="$(gcloud run services describe "$DASHBOARD_SERVICE" --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>"$LOOKUP_ERR")"; then
+  :
+elif grep -qiE "not found|NOT_FOUND" "$LOOKUP_ERR"; then
+  DASHBOARD_URL=""   # not deployed yet
+else
+  cat "$LOOKUP_ERR" >&2
+  echo "Couldn't check the $DASHBOARD_SERVICE service — stopping so sign-in settings aren't overwritten." >&2
+  exit 1
+fi
 URL="$(gcloud run services describe "$SERVICE" --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>/dev/null || true)"
 ENV_VARS="APP_MODE=dev,STORAGE_BACKEND=gcs,GCS_BUCKET=${BUCKET},AUTO_EVALS=true"
 if [[ -n "$DASHBOARD_URL" ]]; then
