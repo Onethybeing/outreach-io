@@ -20,8 +20,13 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
-EMAIL_PROVIDERS = {"apollo": apollo.find_email}
-DEFAULT_EMAIL_PROVIDER = "apollo"
+EMAIL_PROVIDERS = {
+    # Works on Apollo's free plan: emails revealed on apollo.io and saved as contacts.
+    "apollo_saved_contacts": apollo.find_email_in_saved_contacts,
+    # Automatic lookup; needs a paid Apollo plan (people/match is blocked on free).
+    "apollo": apollo.find_email,
+}
+DEFAULT_EMAIL_PROVIDER = "apollo_saved_contacts"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
 SENT = (SendStatus.sent, SendStatus.sent_dev)
 
@@ -221,6 +226,8 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
     if result.found:
         contact.email, contact.email_source = result.email, provider
         contact.email_lookup_status = EmailLookupStatus.found
+    elif result.retryable:
+        contact.email_lookup_status = EmailLookupStatus.failed  # free to try again later
     else:
         contact.email_lookup_status = EmailLookupStatus.not_found
     audit.record(db, user, "contacts.email_lookup", "contact", contact.id, {"provider": provider, "found": result.found})
