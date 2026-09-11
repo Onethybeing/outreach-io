@@ -53,7 +53,9 @@ def _pending_candidate(db: Session, candidate_id: uuid.UUID) -> tuple[Candidate,
 
 def _existing_contact(db: Session, candidate: Candidate) -> Contact | None:
     # Re-check now: someone may have approved the same person from another run since discovery.
-    contact = db.scalar(select(Contact).where(Contact.linkedin_url == candidate.linkedin_url))
+    # Row lock: the status checks callers make on this contact must not interleave with a lookup
+    # or verification claiming it (those lock the same row).
+    contact = db.scalar(select(Contact).where(Contact.linkedin_url == candidate.linkedin_url).with_for_update())
     candidate.existing_contact_id = contact.id if contact else None
     return contact
 
