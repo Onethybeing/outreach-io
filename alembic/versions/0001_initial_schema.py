@@ -17,15 +17,15 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-run_status = postgresql.ENUM("pending", "running", "completed", "failed", name="runstatus")
-apollo_status = postgresql.ENUM("not_run", "running", "found", "not_found", name="apollostatus")
-email_source = postgresql.ENUM("apollo", "brightdata", "manual", name="emailsource")
-draft_status = postgresql.ENUM("none", "generated", "approved", name="draftstatus")
+run_status = postgresql.ENUM("pending", "running", "completed", "failed", name="runstatus", create_type=False)
+apollo_status = postgresql.ENUM("not_run", "running", "found", "not_found", name="apollostatus", create_type=False)
+email_source = postgresql.ENUM("apollo", "brightdata", "manual", name="emailsource", create_type=False)
+draft_status = postgresql.ENUM("none", "generated", "approved", name="draftstatus", create_type=False)
 send_status = postgresql.ENUM(
-    "none", "queued", "sent", "sent_dev", "failed", name="sendstatus"
+    "none", "queued", "sent", "sent_dev", "failed", name="sendstatus", create_type=False
 )
-reply_status = postgresql.ENUM("waiting", "replied", "bounced", name="replystatus")
-email_direction = postgresql.ENUM("out", "in_", name="emaildirection")
+reply_status = postgresql.ENUM("waiting", "replied", "bounced", name="replystatus", create_type=False)
+email_direction = postgresql.ENUM("out", "in_", name="emaildirection", create_type=False)
 
 
 def upgrade() -> None:
