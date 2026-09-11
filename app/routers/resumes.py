@@ -22,8 +22,9 @@ def list_resumes(db: Session = Depends(get_db)) -> list[Resume]:
     return list(db.scalars(select(Resume).order_by(Resume.uploaded_at.desc())))
 
 
+# Plain `def` so FastAPI runs it in a worker thread; the DB calls below are blocking.
 @router.post("", response_model=ResumeOut)
-async def upload_resume(file: UploadFile, db: Session = Depends(get_db)) -> Resume:
+def upload_resume(file: UploadFile, db: Session = Depends(get_db)) -> Resume:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(400, f"Unsupported file type '{suffix}'. Use PDF or DOCX.")
@@ -31,14 +32,19 @@ async def upload_resume(file: UploadFile, db: Session = Depends(get_db)) -> Resu
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     stored_name = f"{uuid.uuid4()}{suffix}"
     dest = STORAGE_DIR / stored_name
-    dest.write_bytes(await file.read())
+    dest.write_bytes(file.file.read())
 
     resume = Resume(
         filename=file.filename or stored_name,
         storage_path=str(dest),
         status="uploaded",
     )
-    db.add(resume)
-    db.commit()
+    try:
+        db.add(resume)
+        db.commit()
+    except Exception:
+        db.rollback()
+        dest.unlink(missing_ok=True)
+        raise
     db.refresh(resume)
     return resume
