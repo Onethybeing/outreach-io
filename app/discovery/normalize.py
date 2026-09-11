@@ -27,6 +27,20 @@ def linkedin_profile_url(url: str | None) -> str | None:
     return f"https://www.linkedin.com/in/{slug}"
 
 
+def linkedin_company_slug(url: str | None) -> str | None:
+    """'https://www.linkedin.com/company/Powerful-Medical?trk=x' → 'powerful-medical'."""
+    if not url:
+        return None
+    parsed = urlparse(url.strip() if "://" in url else f"https://{url.strip()}")
+    host = (parsed.hostname or "").lower()
+    if not (host == "linkedin.com" or host.endswith(".linkedin.com")):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2 or parts[0].lower() != "company":
+        return None
+    return unquote(parts[1]).strip().lower() or None
+
+
 def company_key(name: str | None) -> str:
     """Loose key for spotting the same company twice: 'Acme Vector, Inc.' → 'acmevector'."""
     if not name:
@@ -70,11 +84,18 @@ def title_names_other_company(title: str | None, startup_name: str, website: str
     company = match.group("company").strip()
     if match.group("at") and not company[:1].isupper():
         return False
-    named = company_key(company)
+    if not company_key(company):
+        return False
+    return not names_match(company, startup_name, website)
+
+
+def names_match(company_name: str | None, startup_name: str, website: str | None = None) -> bool:
+    """Is `company_name` the startup, by name or by its website's base name? Uses the generic-tail rule."""
+    named = company_key(company_name)
     if not named:
         return False
     targets = [k for k in (company_key(startup_name), company_key(website_domain(website).split(".")[0])) if k]
-    return not any(_same_company(named, target) for target in targets)
+    return any(_same_company(named, target) for target in targets)
 
 
 def website_domain(url: str | None) -> str:

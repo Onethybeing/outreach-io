@@ -48,17 +48,22 @@ class RunStatus(str, enum.Enum):
     failed = "failed"
 
 
-class ApolloStatus(str, enum.Enum):
+class EmailLookupStatus(str, enum.Enum):
     not_run = "not_run"
     running = "running"
     found = "found"
-    not_found = "not_found"
+    not_found = "not_found"  # provider answered: no email for this person
+    failed = "failed"  # couldn't ask (error, plan limit) — retryable
 
 
-class EmailSource(str, enum.Enum):
-    apollo = "apollo"
-    brightdata = "brightdata"
-    manual = "manual"
+class VerificationStatus(str, enum.Enum):
+    not_run = "not_run"
+    queued = "queued"
+    running = "running"
+    verified = "verified"  # profile's current company is the startup
+    mismatch = "mismatch"  # profile's current company is a different company
+    unconfirmed = "unconfirmed"  # profile shows no current company, or the match is too uncertain
+    failed = "failed"  # scrape/lookup error — retryable
 
 
 class DraftStatus(str, enum.Enum):
@@ -174,6 +179,9 @@ class Startup(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     relevance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The company's LinkedIn page, used to verify employment; looked up once (enriched_at set even if none found).
+    linkedin_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    company_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     run: Mapped["Run"] = relationship(back_populates="startups")
@@ -199,14 +207,23 @@ class Contact(Base):
         ForeignKey("contacts.id"), nullable=True
     )
 
-    apollo_status: Mapped[ApolloStatus] = mapped_column(
-        Enum(ApolloStatus), default=ApolloStatus.not_run
+    email_lookup_status: Mapped[EmailLookupStatus] = mapped_column(
+        Enum(EmailLookupStatus), default=EmailLookupStatus.not_run, server_default="not_run"
     )
+    email_lookup_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_looked_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
-    email_source: Mapped[EmailSource | None] = mapped_column(Enum(EmailSource), nullable=True)
+    email_source: Mapped[str | None] = mapped_column(String(32), nullable=True)  # apollo | hunter | manual
 
+    verification_status: Mapped[VerificationStatus] = mapped_column(
+        Enum(VerificationStatus), default=VerificationStatus.not_run, server_default="not_run"
+    )
     employment_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     verification_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    verified_title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    verified_company_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     draft_status: Mapped[DraftStatus] = mapped_column(Enum(DraftStatus), default=DraftStatus.none)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -343,6 +360,8 @@ class Candidate(Base):
     existing_contact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("contacts.id"), nullable=True
     )
+    # The contact this candidate became (approve) or was linked to (reuse / update).
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("contacts.id"), nullable=True)
     status: Mapped[CandidateStatus] = mapped_column(
         Enum(CandidateStatus), default=CandidateStatus.pending
     )

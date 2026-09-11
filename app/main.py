@@ -13,7 +13,8 @@ from app import bootstrap
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.prompts import PromptError
-from app.routers import audit_log, auth, prompts, resumes, runs, users, vault
+from app.contacts.service import ActionError
+from app.routers import audit_log, auth, contacts, prompts, resumes, runs, users, vault
 from app.schemas import HealthOut
 from app.vault import VaultError
 
@@ -36,6 +37,7 @@ app = FastAPI(title="outreach-io", lifespan=lifespan)
 for router in (
     auth.router, users.router, audit_log.router, vault.router, prompts.router, resumes.router,
     runs.router, runs.candidates_router,
+    contacts.candidates_router, contacts.contacts_router, contacts.settings_router,
 ):
     app.include_router(router)
 
@@ -44,6 +46,11 @@ for router in (
 @app.exception_handler(PromptError)
 async def user_facing_error(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+
+@app.exception_handler(ActionError)
+async def action_error(_: Request, exc: ActionError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
 
 
 @app.get("/health", response_model=HealthOut)

@@ -22,6 +22,7 @@ ADMIN = OPERATOR | {
     "prompts.edit",
     "users.manage",
     "audit.view",
+    "settings.manage",
 }
 
 PERMISSIONS: dict[UserRole, frozenset[str]] = {
