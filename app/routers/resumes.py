@@ -1,4 +1,4 @@
-"""Resume library endpoints (upload + list). Parsing/OCR lands in Phase 2."""
+"""Resume library endpoints (upload + list). Parsing/OCR lands with the discovery graph."""
 
 import uuid
 from pathlib import Path
@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import audit
+from app.auth import require
 from app.db import get_db
-from app.models import Resume
+from app.models import Resume, User
 from app.schemas import ResumeOut
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
@@ -18,13 +20,19 @@ ALLOWED_SUFFIXES = {".pdf", ".docx"}
 
 
 @router.get("", response_model=list[ResumeOut])
-def list_resumes(db: Session = Depends(get_db)) -> list[Resume]:
+def list_resumes(
+    db: Session = Depends(get_db), _: User = Depends(require("dashboard.view"))
+) -> list[Resume]:
     return list(db.scalars(select(Resume).order_by(Resume.uploaded_at.desc())))
 
 
 # Plain `def` so FastAPI runs it in a worker thread; the DB calls below are blocking.
 @router.post("", response_model=ResumeOut)
-def upload_resume(file: UploadFile, db: Session = Depends(get_db)) -> Resume:
+def upload_resume(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user: User = Depends(require("resumes.upload")),
+) -> Resume:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(400, f"Unsupported file type '{suffix}'. Use PDF or DOCX.")
@@ -41,6 +49,8 @@ def upload_resume(file: UploadFile, db: Session = Depends(get_db)) -> Resume:
     )
     try:
         db.add(resume)
+        db.flush()
+        audit.record(db, user, "resumes.upload", "resume", resume.id, {"filename": resume.filename})
         db.commit()
     except Exception:
         db.rollback()

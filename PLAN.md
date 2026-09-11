@@ -265,7 +265,10 @@ lose a working version.
 
 - **Login:** Google sign-in (OAuth/OIDC). Only emails present in `users` and marked active can
   log in — no open sign-up. Session in an httpOnly secure cookie.
-- **First admin:** created from `INITIAL_ADMIN_EMAIL` on first start.
+- **First admin:** created from `INITIAL_ADMIN_EMAIL` on startup, only when there is no active
+  admin (so it recovers a lockout but never overrides a deliberate demotion).
+- **While the Google consent screen is in Testing,** every login email must also be added as a
+  test user there, in addition to being in `users`.
 - **Enforcement is server-side:** every FastAPI route declares a permission
   (e.g. `Depends(require("contacts.send"))`). The UI hides buttons the user can't use, but the
   backend check is the real gate.
@@ -405,8 +408,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 
 ## 16. Build order (phased, no time estimates)
 
-1. ✅ Repo scaffold + Postgres schema + FastAPI skeleton + Neon connection (review fixes in PR #1).
-2. **Auth + RBAC + audit log + API vault + prompt store (backend).** Done before the agent so
+1. ✅ Repo scaffold + Postgres schema + FastAPI skeleton + Neon connection.
+2. ✅ Auth + RBAC + audit log + API vault + prompt store (backend). Done before the agent so
    every node reads keys and prompts from the vault/store from day one.
 3. `discovery_graph` (resume ingest → profile → startups → KDMs), tested via API + Langfuse.
 4. Postgres dedupe + `contact_graph` verify/cross-check nodes.

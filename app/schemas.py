@@ -1,18 +1,150 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models import UserRole
 
 
-class ResumeOut(BaseModel):
+class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+
+class HealthOut(BaseModel):
+    status: str
+    db: str
+
+
+class ResumeOut(ORM):
     id: uuid.UUID
     filename: str
     status: str
     uploaded_at: datetime
 
 
-class HealthOut(BaseModel):
+# --- users / auth ----------------------------------------------------------
+
+class UserOut(ORM):
+    id: uuid.UUID
+    email: str
+    name: str | None
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class MeOut(UserOut):
+    permissions: list[str]
+
+
+class UserCreate(BaseModel):
+    email: str
+    name: str | None = None
+    role: UserRole = UserRole.viewer
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        local, _, domain = v.partition("@")
+        if not local or "." not in domain:
+            raise ValueError("Not a valid email address")
+        return v
+
+
+class UserUpdate(BaseModel):
+    name: str | None = None
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class AuditOut(ORM):
+    id: uuid.UUID
+    user_email: str | None
+    action: str
+    target_type: str | None
+    target_id: str | None
+    details: dict | None
+    created_at: datetime
+
+
+# --- vault -------------------------------------------------------------------
+
+class ProviderStatusOut(ORM):
+    provider: str
+    configured: bool
+    fields: list[str]
+    version: int | None
+    last4: str | None
+    created_at: datetime | None
+    created_by: str | None
+    last_tested_at: datetime | None
+    last_test_ok: bool | None
+
+
+class CredentialVersionOut(ORM):
+    version: int
     status: str
-    db: str
+    last4: str
+    created_at: datetime
+    retired_at: datetime | None
+    last_tested_at: datetime | None
+    last_test_ok: bool | None
+
+
+class CredentialIn(BaseModel):
+    values: dict[str, str]
+
+
+class TestResultOut(BaseModel):
+    ok: bool
+    message: str
+
+
+# --- prompts -----------------------------------------------------------------
+
+class PromptOut(ORM):
+    id: uuid.UUID
+    node_name: str
+    version: int
+    template: str
+    required_variables: list[str]
+    model: str
+    temperature: float
+    is_active: bool
+    note: str | None
+    created_by: uuid.UUID | None
+    created_at: datetime
+
+
+class NodePromptOut(BaseModel):
+    node: str
+    description: str
+    required_variables: list[str]
+    optional_variables: list[str]
+    active: PromptOut | None
+
+
+class PromptCreate(BaseModel):
+    template: str
+    model: str
+    temperature: float = Field(ge=0, le=2)
+    note: str | None = None
+    activate: bool = False
+
+
+class PromptTestIn(BaseModel):
+    template: str
+    model: str
+    temperature: float = Field(ge=0, le=2)
+    variables: dict[str, str] | None = None
+
+
+class PromptTestOut(BaseModel):
+    rendered_prompt: str
+    output: str
+
+
+class DiffOut(BaseModel):
+    diff: str

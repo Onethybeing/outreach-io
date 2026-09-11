@@ -8,8 +8,16 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://user:password@localhost/outreach_io"
 
+    # Bootstrap secrets (PLAN.md §7): these never live in the vault.
+    vault_master_key: str = ""
+    session_secret: str = ""
+    initial_admin_email: str = ""
+    google_login_client_id: str = ""
+    google_login_client_secret: str = ""
+    public_base_url: str = "http://localhost:8000"
+
+    # Provider keys: read only to seed the vault on first start.
     groq_api_key: str = ""
-    anthropic_api_key: str = ""
     tavily_api_key: str = ""
     apollo_api_key: str = ""
     brightdata_api_key: str = ""
@@ -23,7 +31,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    app_mode: str = "dev"  # "dev" | "prod" — see PLAN.md section 6
+    app_mode: str = "dev"  # "dev" | "prod" — see PLAN.md §6
 
     @property
     def is_prod(self) -> bool:
