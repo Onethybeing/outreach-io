@@ -26,6 +26,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def clean_subject(subject: str) -> str:
+    """One line: email headers can't contain line breaks, so a multi-line subject could never be sent."""
+    return " ".join(subject.split())
+
+
 def _check_can_draft(contact: Contact, force: bool) -> None:
     if contact.do_not_contact:
         raise ActionError(400, "This contact asked not to be contacted")
@@ -62,7 +67,7 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             db, prompt.model, text, prompt.temperature,
             name="generate_draft", metadata={"prompt_version": prompt.version, "prompt_id": str(prompt.id)},
         )
-        subject = str(raw.get("subject") or "").strip()
+        subject = clean_subject(str(raw.get("subject") or ""))
         body = str(raw.get("body") or "").strip()
         if not subject or not body:
             raise llm.LLMError("generate_draft: the model returned an empty subject or body")
@@ -99,7 +104,12 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
             state = _build_graph(db, contact, startup, resume).invoke({})
             root.update(output={"subject": state["subject"]})
     except EXPECTED_ERRORS as exc:
+        db.rollback()
         raise ActionError(502, f"Draft generation failed: {exc}")
+    except Exception as exc:  # noqa: BLE001 — surface as a normal action error, never a bare 500 / dead bulk job
+        db.rollback()
+        logger.exception("Draft generation for contact %s crashed", contact_id)
+        raise ActionError(502, f"Draft generation failed unexpectedly ({type(exc).__name__}) — see server logs")
     finally:
         telemetry.flush(client)
 
@@ -116,7 +126,7 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
 
 
 def edit(db: Session, contact_id: uuid.UUID, subject: str, body: str, user: User) -> Contact:
-    subject, body = subject.strip(), body.strip()
+    subject, body = clean_subject(subject), body.strip()
     if not subject or not body:
         raise ActionError(422, "Subject and body can't be empty")
     if len(subject) > MAX_SUBJECT:
@@ -175,9 +185,9 @@ def execute_bulk(db: Session, contact_ids: list[uuid.UUID], user_id: uuid.UUID) 
             continue
         try:
             generate(db, contact_id, user)
-        except ActionError as exc:
+        except Exception as exc:  # noqa: BLE001 — one bad contact must not stop the rest of the batch
             db.rollback()
-            logger.warning("Bulk draft for %s skipped: %s", contact_id, exc)
+            logger.warning("Bulk draft for %s skipped: %s", contact_id, exc, exc_info=not isinstance(exc, ActionError))
 
 
 def _run_bulk(contact_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:

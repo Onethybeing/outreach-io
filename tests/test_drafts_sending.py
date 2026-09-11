@@ -233,6 +233,40 @@ def test_bulk_draft_and_send_counts_and_execution(db, contact, operator, llm_ans
     assert contact.send_status == SendStatus.sent_dev
 
 
+def test_multiline_subject_is_flattened_and_still_sends(db, contact, operator, llm_answer, outbox):
+    llm_answer["answer"] = {"subject": "Hello\r\nfrom  Priya", "body": "Body"}
+    assert _generate(operator, contact).json()["draft_subject"] == "Hello from Priya"
+    edited = operator.put(f"/contacts/{contact.id}/draft", json={"subject": "Hi\nthere", "body": "Body"}).json()
+    assert edited["draft_subject"] == "Hi there"
+    operator.post(f"/contacts/{contact.id}/draft/approve")
+    assert operator.post(f"/contacts/{contact.id}/send").status_code == 200
+
+
+def test_bulk_drafts_continue_after_an_unexpected_error(db, contact, make_user, monkeypatch):
+    from app.contacts import drafts
+
+    second = Contact(
+        startup_id=contact.startup_id, run_id=contact.run_id, resume_id=contact.resume_id, cv_used_id=contact.cv_used_id,
+        name="Sam Lee", linkedin_url=f"https://www.linkedin.com/in/sam-{uuid.uuid4().hex[:8]}", email="sam@acmevector.example",
+        email_source="manual", email_lookup_status=EmailLookupStatus.found,
+    )
+    db.add(second)
+    db.commit()
+    calls = []
+
+    def flaky(db_, model, prompt, temperature, max_tokens=4096, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyError("choices")  # e.g. a malformed provider response
+        return {"subject": "Hi", "body": "Hello"}
+
+    monkeypatch.setattr(llm, "complete_json", flaky)
+    drafts.execute_bulk(db, [contact.id, second.id], make_user(UserRole.operator).id)
+    db.refresh(contact)
+    db.refresh(second)
+    assert contact.draft_status == DraftStatus.none and second.draft_status == DraftStatus.generated
+
+
 def test_interrupted_send_is_failed_at_startup(db, contact):
     contact.send_status = SendStatus.queued
     db.commit()

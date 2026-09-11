@@ -123,9 +123,9 @@ def execute_bulk(db: Session, contact_ids: list[uuid.UUID], user_id: uuid.UUID) 
             continue
         try:
             send(db, contact_id, user)
-        except ActionError as exc:
+        except Exception as exc:  # noqa: BLE001 — one bad contact must not stop the rest of the batch
             db.rollback()
-            logger.warning("Bulk send for %s skipped: %s", contact_id, exc)
+            logger.warning("Bulk send for %s skipped: %s", contact_id, exc, exc_info=not isinstance(exc, ActionError))
 
 
 def _run_bulk(contact_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:
