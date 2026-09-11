@@ -95,6 +95,20 @@ def test_classification_rules_before_llm(db, inbox, message, expected, uses_llm)
     assert label == expected and (inbox["llm_calls"] == 1) is uses_llm
 
 
+@pytest.mark.parametrize("subject, snippet, expected", [
+    ("Delivery Status Notification (Delay)", "Delivery incomplete. Gmail will retry for 46 more hours.", None),
+    ("Delayed Mail (still being retried)", "Your message has been delayed", None),
+    ("Undeliverable: Temporary staffing for your launch", "Your message couldn't be delivered", ReplyClassification.bounce),
+    ("Undeliverable: Sorry for the delayed follow-up", "", ReplyClassification.bounce),
+    ("Delivery Status Notification (Failure)", "451 4.3.0 temporary failure; retries exhausted", ReplyClassification.bounce),
+    ("Mail delivery failed: returning message to sender", "The mailbox is temporarily unavailable, will retry", ReplyClassification.bounce),
+])
+def test_delay_vs_failure_wording(db, inbox, subject, snippet, expected):
+    message = gmail.GmailMessage("x", "t", "mailer-daemon@googlemail.com", subject,
+                                 datetime.now(timezone.utc), snippet, snippet, False)
+    assert tracker.classify(db, message, None)[0] == expected
+
+
 def test_unknown_llm_label_is_treated_as_reply(db, inbox):
     prompts.seed_defaults(db)
     inbox["llm"] = {"label": "spam?", "summary": "odd"}

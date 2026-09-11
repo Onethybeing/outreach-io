@@ -25,7 +25,14 @@ LABELS = {label.value for label in ReplyClassification}
 BOUNCE_SENDERS = ("mailer-daemon@", "postmaster@")
 BOUNCE_SUBJECT = re.compile(r"undeliverable|delivery status notification|delivery (has )?failed|returned mail|failure notice", re.I)
 # "Delivery Status Notification (Delay)" comes from the same senders but the mail usually arrives later.
-DELAY_NOTICE = re.compile(r"\bdelay(ed)?\b|will (retry|keep trying)|temporar(y|ily)", re.I)
+# Only explicit delay markers count, and explicit failure wording always wins: quoted subjects and
+# SMTP explanations ("temporary failure") appear in real bounces too.
+FAILURE_WORDING = re.compile(
+    r"\(failure\)|undeliverable|could ?n[o']t be delivered|permanent(ly)?|delivery (has )?failed|failure notice|"
+    r"returned mail|address not found|does not exist|user unknown|mailbox unavailable", re.I,
+)
+DELAY_SUBJECT = re.compile(r"\(delay\)|^\s*delivery delayed|^\s*delayed mail", re.I)
+DELAY_BODY = re.compile(r"will (retry|keep trying)|still being retried|has been delayed", re.I)
 OOO_SUBJECT = re.compile(r"out of (the )?office|automatic reply|auto(-|\s)?reply|away from (the )?office", re.I)
 
 _poll_lock = threading.Lock()
@@ -49,7 +56,9 @@ def classify(db: Session, message: gmail.GmailMessage, sent_text: str | None) ->
     Returns (None, note) for delivery-delay notices: recorded, but not a response and not a bounce.
     """
     if message.from_address.startswith(BOUNCE_SENDERS) or BOUNCE_SUBJECT.search(message.subject):
-        if DELAY_NOTICE.search(f"{message.subject} {message.snippet}"):
+        is_failure = FAILURE_WORDING.search(message.subject) or FAILURE_WORDING.search(message.snippet)
+        is_delay = DELAY_SUBJECT.search(message.subject) or DELAY_BODY.search(message.snippet)
+        if is_delay and not is_failure:
             return None, "Delivery delayed (not a bounce; the mail may still arrive)"
         return ReplyClassification.bounce, "Delivery failure notice"
     if message.auto_submitted or OOO_SUBJECT.search(message.subject):
