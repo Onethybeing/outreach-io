@@ -299,7 +299,15 @@ def test_not_found_goes_to_no_email_then_manual_entry_fixes_it(db, world, operat
     assert operator.put(f"/contacts/{contact_id}/email", json={"email": "nope"}).status_code == 422
     manual = operator.put(f"/contacts/{contact_id}/email", json={"email": " Simon@PowerfulMedical.com "}).json()
     assert manual["email"] == "simon@powerfulmedical.com" and manual["email_source"] == "manual"
+    assert manual["email_lookup_status"] == "not_found"  # still records what the provider answered
     assert contact_id in {c["id"] for c in operator.get("/contacts?view=active").json()}
+
+
+def test_lookup_refuses_when_email_already_present(db, world, operator):
+    contact_id = _verified_contact(operator, world)
+    operator.put(f"/contacts/{contact_id}/email", json={"email": "typed@powerfulmedical.com"})
+    blocked = operator.post(f"/contacts/{contact_id}/email/lookup")
+    assert blocked.status_code == 409 and "already has an email" in blocked.json()["detail"]
 
 
 def test_do_not_contact_blocks_lookup(db, world, operator):

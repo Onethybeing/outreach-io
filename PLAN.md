@@ -369,6 +369,21 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
   5. **Draft quality** — LLM-as-judge rubric (personalization, tone, length, no facts not in the
      resume) + the real outcome: reply rate per prompt version (§10).
 - All via the Langfuse Scores API — no extra service.
+- **Built (Phase 8):**
+  - Judges are editable prompts `eval_startup_relevance` (light model) and `eval_draft_quality`
+    (heavy model). They run automatically in a 1-worker background pool after each completed run
+    and after each generated or edited draft (`AUTO_EVALS=false` turns that off); manual triggers:
+    `POST /evals/runs/{id}/startups`, `POST /evals/contacts/{id}/draft`.
+  - Results live in `startups.relevance_judge(_reason)` and `contacts.draft_eval`, and are sent as
+    Langfuse scores on the run trace / the draft's generation trace (`contacts.draft_trace_id`).
+    A draft eval is discarded if the draft changed while it was being judged.
+  - Human signals as Langfuse scores: `kdm_approved` (approve/reuse/update = 1, reject = 0),
+    `draft_edited_before_approval`, `reply_outcome`. A scoring failure never affects the action.
+  - Resume-parsing golden set: put labelled cases in `evals/parse_resume/cases/*.json` and run
+    `scripts/eval_parse_resume.py [--langfuse]` (field-level scores: word overlap for text, F1 for
+    lists, ±1 year for experience).
+  - Live check: the startup judge scored a real run's 2 startups at 1.0 each — likely lenient;
+    calibrate the prompt once there are human approve/reject labels to compare against.
 
 ---
 
@@ -491,7 +506,7 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
    Audit Log).
 7. ✅ Reply tracking + classification (backend: `POST /replies/poll`, `GET /replies`, scheduler endpoint
    `POST /internal/poll-replies` with `INTERNAL_TASK_TOKEN`). Replies tab comes with the dashboard.
-8. Stats tab + Langfuse eval scoring.
+8. ✅ Stats (`GET /stats`, cached 60s) + Langfuse eval scoring (backend). Stats tab comes with the dashboard.
 9. Deploy to Cloud Run on the `sourav.jhinjha@gmail.com` GCP project (dev mode only), on Python
    3.12 (Google's client libraries drop Python 3.10 support after 2026-10-04). Add a public
    homepage + privacy policy page, fill them into the Google consent screen's Branding page, and

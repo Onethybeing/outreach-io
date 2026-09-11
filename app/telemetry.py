@@ -170,6 +170,19 @@ def trace_url(client: Langfuse | None, trace_id: str) -> str | None:
         return None
 
 
+def score(
+    client: Langfuse | None, trace_id: str | None, name: str, value: float | str,
+    data_type: str = "NUMERIC", comment: str | None = None,
+) -> None:
+    """Attach an eval/human score to a trace. Never raises."""
+    if client is None or not trace_id:
+        return
+    try:
+        client.create_score(name=name, value=value, trace_id=trace_id, data_type=data_type, comment=comment)
+    except Exception:  # noqa: BLE001
+        logger.warning("Langfuse score %s failed", name, exc_info=True)
+
+
 def flush(client: Langfuse | None) -> None:
     if client is None:
         return

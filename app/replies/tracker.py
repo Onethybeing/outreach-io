@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import llm, prompts, telemetry, vault
+from app import evals, llm, prompts, telemetry, vault
 from app.models import Contact, EmailDirection, EmailEvent, ReplyClassification, ReplyStatus, SendStatus
 from app.replies import gmail
 
@@ -126,6 +126,7 @@ def poll_contact(db: Session, contact: Contact, sender_address: str, summary: Po
             messages.append(message)
 
     # Oldest first, so the contact's status reflects the real order of events.
+    labels = []
     for message in sorted(messages, key=lambda m: m.received_at):
         label, note = classify(db, message, contact.draft_text)
         db.add(EmailEvent(
@@ -137,7 +138,11 @@ def poll_contact(db: Session, contact: Contact, sender_address: str, summary: Po
         summary.new_messages += 1
         key = label.value if label else "delivery_delayed"
         summary.by_label[key] = summary.by_label.get(key, 0) + 1
+        if label is not None:
+            labels.append(label)
     db.commit()
+    for label in labels:
+        evals.safe_signal(evals.record_reply, db, contact, label)
 
 
 def poll_all(db: Session) -> PollSummary:
