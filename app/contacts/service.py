@@ -191,6 +191,8 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
         raise ActionError(409, "An email lookup is already running for this contact")
     if not force and contact.email_lookup_status in (EmailLookupStatus.found, EmailLookupStatus.not_found):
         raise ActionError(409, f"Already looked up ({contact.email_lookup_status.value}) — use force to spend another lookup")
+    if not force and contact.email:
+        raise ActionError(409, "This contact already has an email — use force to look one up anyway")
     if not force and contact.verification_status != VerificationStatus.verified:
         raise ActionError(400, "Employment isn't verified yet — verify first, or use force")
 
@@ -233,8 +235,9 @@ def set_manual_email(db: Session, contact_id: uuid.UUID, email: str, user: User)
     contact = _contact(db, contact_id, lock=True)
     if contact.email_lookup_status == EmailLookupStatus.running:
         raise ActionError(409, "An email lookup is running for this contact — wait for it to finish")
+    # email_lookup_status keeps recording what the provider answered (e.g. not_found), so stats and
+    # "don't pay twice" rules stay truthful; email_source says where the address in use came from.
     contact.email, contact.email_source = email, "manual"
-    contact.email_lookup_status, contact.email_lookup_note = EmailLookupStatus.found, "Entered manually"
     audit.record(db, user, "contacts.manual_email", "contact", contact.id)
     db.commit()
     return contact

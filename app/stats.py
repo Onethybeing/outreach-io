@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Float, and_, case, cast, func, or_, select
+from sqlalchemy import Float, and_, case, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -165,8 +165,10 @@ def build(db: Session, days: int = 30, resume_id: uuid.UUID | None = None, inclu
     ) or 0
     lookups = db.execute(
         select(func.count(), func.count().filter(Contact.email_lookup_status == EmailLookupStatus.found))
-        # Misses leave email_source NULL; `!= 'manual'` alone would silently drop them (NULL comparison).
-        .where(Contact.email_looked_up_at >= since, or_(Contact.email_source.is_(None), Contact.email_source != "manual"))
+        # Only lookups the provider actually answered: failed attempts (errors, plan limits, restarts)
+        # aren't misses, and manual entry never changes this status.
+        .where(Contact.email_looked_up_at >= since,
+               Contact.email_lookup_status.in_([EmailLookupStatus.found, EmailLookupStatus.not_found]))
     ).one()
     usage["email_lookup_hit_rate"] = rate(lookups[1], lookups[0])
     verifications = db.execute(
