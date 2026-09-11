@@ -123,6 +123,8 @@ def _earlier_run_with_startup_and_contact(db, resume):
     old = Startup(run_id=earlier.id, name="Old Co", website="https://oldco.example")
     db.add(old)
     db.flush()
+    db.add(Candidate(run_id=earlier.id, startup_id=old.id, name="Proposed Before",
+                     linkedin_url="https://www.linkedin.com/in/proposed-before"))
     db.add(Contact(startup_id=old.id, run_id=earlier.id, resume_id=resume.id, cv_used_id=resume.id,
                    name="Already", linkedin_url="https://www.linkedin.com/in/already-contact"))
     db.commit()
@@ -220,6 +222,57 @@ def test_startups_from_failed_earlier_runs_can_be_picked_again(db, resume, world
     graph.execute_run(db, run.id)
     names = {s.name for s in db.scalars(select(Startup).where(Startup.run_id == run.id))}
     assert "Old Co" in names
+
+
+def test_startup_where_nobody_was_found_can_be_picked_again(db, resume, world):
+    earlier = _make_run(db, resume, status=RunStatus.completed)
+    db.add(Startup(run_id=earlier.id, name="Old Co", website="https://oldco.example"))  # zero candidates
+    db.commit()
+    run = _make_run(db, resume, num_startups=3)
+    graph.execute_run(db, run.id)
+    assert "Old Co" in {s.name for s in db.scalars(select(Startup).where(Startup.run_id == run.id))}
+
+
+@pytest.fixture
+def stream_sessions(db, monkeypatch):
+    """The stream opens its own sessions (by design); point them at the test transaction."""
+    from contextlib import nullcontext
+
+    from app import auth
+    from app.routers import runs as runs_router
+
+    monkeypatch.setattr(auth, "SessionLocal", lambda: nullcontext(db))
+    monkeypatch.setattr(runs_router, "SessionLocal", lambda: nullcontext(db))
+
+
+def _sse(client, url):
+    kinds = []
+    with client.stream("GET", url) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if line.startswith("event: "):
+                kinds.append(line[7:])
+    return kinds
+
+
+def test_stream_replays_events_and_ends(db, resume, world, stream_sessions, make_user, login):
+    run = _make_run(db, resume)
+    graph.execute_run(db, run.id)
+    client = login(make_user(UserRole.viewer))
+    kinds = _sse(client, f"/runs/{run.id}/stream")
+    assert len(kinds) == len(_events(db, run)) + 1
+    assert kinds[-2:] == ["completed", "end"]
+
+    client.cookies.clear()
+    assert client.get(f"/runs/{run.id}/stream").status_code == 401
+
+
+def test_stream_for_dead_run_ends_instead_of_hanging(db, resume, stream_sessions, make_user, login):
+    run = _make_run(db, resume, status=RunStatus.running)
+    run.heartbeat_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    db.commit()
+    kinds = _sse(login(make_user(UserRole.viewer)), f"/runs/{run.id}/stream")
+    assert kinds == ["failed", "end"]
 
 
 def test_failed_run_leaves_no_reviewable_candidates(db, resume, world, make_user, login):
@@ -413,6 +466,8 @@ def test_linkedin_normalization(url, expected):
     ("Head of Talent at Scale", "Upscale", None, True),  # substring in the middle is not a match
     ("Engineer at Meta", "Metaview", None, True),  # prefix with a non-generic tail is not a match
     ("Recruiter at Hippocratic", "Hippocratic AI", None, False),
+    ("Co-founder at Hugging-Face", "Hugging Face", None, False),  # hyphen inside the name
+    ("Founder at Acme – building agents", "Acme", None, False),  # spaced dash separates
 ])
 def test_title_names_other_company(title, startup, website, other):
     assert title_names_other_company(title, startup, website) is other

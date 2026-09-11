@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, prompts, vault
-from app.auth import require
+from app.auth import require, require_for_stream
 from app.db import SessionLocal, get_db
 from app.discovery import graph as discovery
 from app.models import Candidate, CandidateStatus, Resume, Run, RunEvent, RunStatus, Startup, User
@@ -138,7 +139,7 @@ def stream_events(
     run_id: uuid.UUID,
     after: int = 0,
     last_event_id: int | None = Header(None),
-    _: User = Depends(require("dashboard.view")),
+    _: uuid.UUID = Depends(require_for_stream("dashboard.view")),
 ) -> StreamingResponse:
     """Server-sent events for the live progress panel. Ends with an `end` event once the run finishes."""
 
@@ -166,8 +167,13 @@ def stream_events(
 
 
 def _poll(run_id: uuid.UUID, after: int) -> tuple[RunStatus | None, list[dict]]:
-    # A short-lived session per poll: the request's session is closed once streaming starts.
+    # A short-lived session per poll, so a watching tab never pins a pooled connection.
     with SessionLocal() as db:
+        run = db.get(Run, run_id)
+        if run is not None and run.status not in FINISHED:
+            # A dead worker never writes its final event; without this the stream would wait forever.
+            if (run.heartbeat_at or run.created_at) < datetime.now(timezone.utc) - discovery.STALE_AFTER:
+                discovery.fail_stale_runs(db)
         # Status first: the final event commits together with the status change, so a finished
         # status guarantees its events are visible to the read that follows.
         run_status = db.scalar(select(Run.status).where(Run.id == run_id))

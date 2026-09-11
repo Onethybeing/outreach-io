@@ -188,11 +188,15 @@ def build_search_queries(ctx: RunContext, state: State) -> NodeResult:
 
 
 def _previous_startups(ctx: RunContext) -> list[Startup]:
-    # Only completed runs: a failed run never proposed people for its startups, so a retry must
-    # be allowed to pick them again.
+    # Only startups that actually produced candidates in a completed run. A failed run, or a
+    # startup where nobody was found, proposed no one, so later runs may pick it again.
+    has_candidates = select(Candidate.id).where(Candidate.startup_id == Startup.id).exists()
     return list(ctx.db.scalars(
         select(Startup).join(Run, Startup.run_id == Run.id)
-        .where(Run.resume_id == ctx.resume.id, Run.id != ctx.run.id, Run.status == RunStatus.completed)
+        .where(
+            Run.resume_id == ctx.resume.id, Run.id != ctx.run.id, Run.status == RunStatus.completed,
+            has_candidates,
+        )
     ))
 
 

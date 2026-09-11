@@ -34,7 +34,9 @@ def company_key(name: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", _LEGAL_SUFFIXES.sub("", name.lower()))
 
 
-_TITLE_COMPANY = re.compile(r"(?:\bat\b|@)\s*([^|,·()\-–—]+)", re.I)
+# Company name after "at"/"@", up to a separator. A dash only separates when spaced
+# ("Beta Labs - hiring"), so hyphenated names ("Hugging-Face") stay whole.
+_TITLE_COMPANY = re.compile(r"(?:\bat\b|@)\s*(.+?)(?=\s[-–—]\s|[|,·()]|$)", re.I)
 _GENERIC_SUFFIXES = {
     "ai", "labs", "lab", "hq", "io", "app", "tech", "technologies", "technology", "health",
     "software", "systems", "group", "global", "computing", "inc", "co",

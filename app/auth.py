@@ -11,7 +11,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import User
 from app.rbac import has_permission
 
@@ -47,8 +47,7 @@ def read_oauth_state(value: str) -> dict:
     return _serializer("oauth-state").loads(value, max_age=STATE_MAX_AGE)
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    raw = request.cookies.get(SESSION_COOKIE)
+def _user_from_cookie(db: Session, raw: str | None) -> User:
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     try:
@@ -64,11 +63,32 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
+def _check(user: User, permission: str) -> None:
+    if not has_permission(user.role, permission):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing permission: {permission}")
+
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    return _user_from_cookie(db, request.cookies.get(SESSION_COOKIE))
+
+
 def require(permission: str):
     def dependency(user: User = Depends(get_current_user)) -> User:
-        if not has_permission(user.role, permission):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing permission: {permission}")
+        _check(user, permission)
         return user
+
+    return dependency
+
+
+def require_for_stream(permission: str):
+    """Auth for long-lived responses (SSE). Uses its own session, closed before streaming starts —
+    `get_db` would hold a pooled connection until the response ends. Returns only the user id."""
+
+    def dependency(request: Request) -> uuid.UUID:
+        with SessionLocal() as db:
+            user = _user_from_cookie(db, request.cookies.get(SESSION_COOKIE))
+            _check(user, permission)
+            return user.id
 
     return dependency
 
