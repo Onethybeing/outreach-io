@@ -399,6 +399,14 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 
 ## 13. Deployment (GCP account `sourav.jhinjha@gmail.com`)
 
+**Built (Phase 9):** project `outreach-io-sj26` (billing linked), Cloud Run service `outreach-api`
+in `us-east5` (closest to the Neon database in AWS us-east-2), image built by Cloud Build into
+Artifact Registry `us-east5-docker.pkg.dev/outreach-io-sj26/outreach`, private bucket
+`gs://outreach-io-sj26-files` for CVs and dev `.eml` files, 7 Secret Manager secrets readable only
+by the `outreach-api` service account, Cloud Scheduler job `poll-replies` in `us-east1` (Cloud
+Scheduler doesn't offer us-east5). One instance with CPU always on and min-instances=1, because
+background jobs run in-process. Deploy with `bash scripts/deploy.sh`; migrations are run separately.
+
 - FastAPI + LangGraph runtime → **Cloud Run**. Discovery runs execute in the background after the
   request returns, so the service needs **CPU always allocated** (otherwise Cloud Run throttles it
   and runs stall), or runs move to Cloud Tasks / Cloud Run Jobs.
@@ -507,8 +515,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 7. ✅ Reply tracking + classification (backend: `POST /replies/poll`, `GET /replies`, scheduler endpoint
    `POST /internal/poll-replies` with `INTERNAL_TASK_TOKEN`). Replies tab comes with the dashboard.
 8. ✅ Stats (`GET /stats`, cached 60s) + Langfuse eval scoring (backend). Stats tab comes with the dashboard.
-9. Deploy to Cloud Run on the `sourav.jhinjha@gmail.com` GCP project (dev mode only), on Python
-   3.12 (Google's client libraries drop Python 3.10 support after 2026-10-04). Add a public
-   homepage + privacy policy page, fill them into the Google consent screen's Branding page, and
-   publish the Google app so the Gmail refresh token stops expiring.
+9. ✅ API deployed to Cloud Run (dev mode, Python 3.12) with GCS file storage, Secret Manager and
+   the reply-check schedule. Still to do once the dashboard exists: a public homepage + privacy
+   policy page, filled into the Google consent screen's Branding page, then publish the Google app
+   so the Gmail refresh token stops expiring.
 10. Only after your explicit approval: switch to prod mode, first real send.

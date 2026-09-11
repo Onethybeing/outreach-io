@@ -21,9 +21,9 @@ def no_tracing(monkeypatch):
 
 @pytest.fixture
 def outbox(tmp_path, monkeypatch):
-    monkeypatch.setattr(sending, "OUTBOX_DIR", tmp_path / "outbox")
+    # conftest points local storage at tmp_path, so dev sends land in tmp_path/outbox.
     monkeypatch.setattr(sending, "sender_address", lambda db: "priya@example.com")
-    return tmp_path / "outbox"
+    return tmp_path / sending.OUTBOX_PREFIX
 
 
 @pytest.fixture

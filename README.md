@@ -80,6 +80,17 @@ No real email is sent: prod mode refuses until real sending is explicitly approv
 Resume-parsing accuracy: `python scripts/eval_parse_resume.py [cases_dir] [--langfuse]` with labelled
 cases in `evals/parse_resume/cases/*.json` (format in the script's docstring).
 
+**Phase 9** — deployment (GCP project `outreach-io-sj26`, dev mode).
+
+- API: Cloud Run service `outreach-api` in `us-east5` (closest region to the Neon database).
+- Files: CVs and dev `.eml` files in the private bucket `gs://outreach-io-sj26-files` (`STORAGE_BACKEND=gcs`).
+- Secrets: `DATABASE_URL`, `VAULT_MASTER_KEY`, `SESSION_SECRET`, `GOOGLE_LOGIN_CLIENT_ID/SECRET`,
+  `INITIAL_ADMIN_EMAIL`, `INTERNAL_TASK_TOKEN` in Secret Manager, readable only by the
+  `outreach-api` service account. Provider API keys stay in the app's encrypted vault.
+- Reply checks: Cloud Scheduler job `poll-replies` (`us-east1`, every 10 minutes) → `POST /internal/poll-replies`.
+- Deploy: `alembic upgrade head` then `bash scripts/deploy.sh` (Cloud Build, no local Docker).
+  One instance, CPU always on, so in-process background jobs keep running.
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).
