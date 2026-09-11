@@ -29,6 +29,21 @@ def upgrade() -> None:
         sa.Column("created_by", UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True),
     )
 
+    # Contacts already flagged do-not-contact need a row too, or a later run would re-propose them.
+    from app.suppression import fingerprint
+
+    connection = op.get_bind()
+    flagged = connection.execute(sa.text("SELECT linkedin_url FROM contacts WHERE do_not_contact")).fetchall()
+    for (linkedin_url,) in flagged:
+        connection.execute(
+            sa.text(
+                "INSERT INTO contact_suppressions (id, linkedin_hash, reason, created_at)"
+                " VALUES (gen_random_uuid(), :digest, 'do_not_contact', now())"
+                " ON CONFLICT (linkedin_hash) DO NOTHING"
+            ),
+            {"digest": fingerprint(linkedin_url)},
+        )
+
 
 def downgrade() -> None:
     op.drop_table("contact_suppressions")

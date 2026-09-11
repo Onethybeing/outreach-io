@@ -59,7 +59,8 @@ class LocalStorage:
         folder = self.root / prefix
         if not folder.is_dir():
             return []
-        return sorted(f"{prefix}/{path.name}" for path in folder.iterdir() if path.is_file())
+        # Recursive, to match GCS: a prefix listing there returns keys in "subdirectories" too.
+        return sorted(path.relative_to(self.root).as_posix() for path in folder.rglob("*") if path.is_file())
 
 
 class GCSStorage:

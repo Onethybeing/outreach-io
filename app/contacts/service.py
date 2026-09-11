@@ -78,6 +78,7 @@ def approve(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
         _decide(candidate, CandidateStatus.rejected, user, None)
         audit.record(db, user, "candidates.reject", "candidate", candidate.id, {"reason": "suppressed"})
         db.commit()
+        evals.safe_signal(evals.record_candidate_decision, db, candidate, False)  # as any other rejection
         raise ActionError(409, "This person asked not to be contacted — the candidate was rejected")
     if _existing_contact(db, candidate) is not None:
         db.commit()
@@ -271,6 +272,9 @@ def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: Us
     if value:
         # Kept even if the contact is later erased, so a new run can't quietly re-add them.
         suppression.suppress(db, contact.linkedin_url, "do_not_contact", user)
+    else:
+        # Undoing has to lift the block too, or approving them later would still be refused.
+        suppression.unsuppress(db, contact.linkedin_url)
     audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
     db.commit()
     return contact
@@ -314,18 +318,26 @@ def erase_contact(db: Session, contact_id: uuid.UUID, user: User) -> None:
     db.delete(contact)
     audit.record(db, user, "contacts.erase", "contact", contact_id, details)
     db.commit()
-    _delete_outbox_files(contact_id)
+    _delete_outbox_files(db, contact_id, user)
 
 
-def _delete_outbox_files(contact_id: uuid.UUID) -> None:
-    """Dev-mode sends leave an .eml holding the address and the message; erasure must take those too."""
+def _delete_outbox_files(db: Session, contact_id: uuid.UUID, user: User) -> None:
+    """Dev-mode sends leave an .eml holding the address and the message; erasure must take those too.
+
+    Runs after the commit, so a rolled-back erasure can't destroy files. If it fails, the files are
+    orphaned with nothing in the database pointing at them, so the failure is audit-logged: the entry
+    plus the key suffix below is what a manual sweep needs.
+    """
     storage = get_storage()
     try:
-        keys = [key for key in storage.list_keys(OUTBOX_PREFIX) if str(contact_id) in key]
-        for key in keys:
-            storage.delete(key)
-    except Exception:  # noqa: BLE001 — the rows are already gone; a storage hiccup must be visible, not fatal
+        suffix = f"-{contact_id}.eml"  # outbox/<timestamp>-<contact id>.eml, written by sending.send
+        for key in storage.list_keys(OUTBOX_PREFIX):
+            if key.endswith(suffix):
+                storage.delete(key)
+    except Exception as exc:  # noqa: BLE001 — the rows are already gone; a storage hiccup must be recorded, not fatal
         logger.exception("Could not remove outbox files for erased contact %s", contact_id)
+        audit.record(db, user, "contacts.erase_files_failed", "contact", contact_id, {"error": str(exc)})
+        db.commit()
 
 
 def bulk_lookup_eligible(db: Session, contact_ids: list[uuid.UUID] | None = None) -> list[uuid.UUID]:

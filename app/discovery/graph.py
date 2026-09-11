@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app import evals, llm, telemetry, vault
+from app import evals, llm, suppression, telemetry, vault
 from app.db import SessionLocal, engine
 from app.jobs import WorkerPool
 from app.discovery import tavily
@@ -336,26 +336,31 @@ def find_kdms(ctx: RunContext, state: State) -> NodeResult:
 
 def dedupe_against_db(ctx: RunContext, state: State) -> NodeResult:
     candidates = list(ctx.db.scalars(select(Candidate).where(Candidate.run_id == ctx.run.id)))
+    # People who unsubscribed, were marked do-not-contact or asked to be erased never come back.
+    # Dropped before anything else is counted, so the numbers below describe what's left to review.
+    blocked = suppression.suppressed(ctx.db, [c.linkedin_url for c in candidates])
+    if blocked:
+        for candidate in [c for c in candidates if c.linkedin_url in blocked]:
+            ctx.db.delete(candidate)
+        candidates = [c for c in candidates if c.linkedin_url not in blocked]
+
     urls = [c.linkedin_url for c in candidates]
     # Contacts store normalized URLs too, so an exact match is the dedupe.
     existing = {c.linkedin_url: c.id for c in ctx.db.scalars(select(Contact).where(Contact.linkedin_url.in_(urls)))}
     earlier = set(ctx.db.scalars(
         select(Candidate.linkedin_url).where(Candidate.linkedin_url.in_(urls), Candidate.run_id != ctx.run.id)
     ))
-    # People who unsubscribed, were marked do-not-contact or asked to be erased never come back.
-    blocked = suppression.suppressed(ctx.db, urls)
-    for candidate in list(candidates):
-        if candidate.linkedin_url in blocked:
-            ctx.db.delete(candidate)
-            candidates.remove(candidate)
-            continue
+    for candidate in candidates:
         candidate.existing_contact_id = existing.get(candidate.linkedin_url)
     message = f"{len(candidates)} candidates ready for review, {len(existing)} already in contacts"
     if blocked:
         message += f", {len(blocked)} skipped (asked not to be contacted)"
     if earlier:
         message += f", {len(earlier)} also proposed in earlier runs"
-    return {}, message, {"candidates": len(candidates), "existing_contacts": len(existing), "proposed_before": len(earlier)}
+    return {}, message, {
+        "candidates": len(candidates), "existing_contacts": len(existing),
+        "proposed_before": len(earlier), "suppressed": len(blocked),
+    }
 
 
 STEPS: tuple[tuple[str, str, Callable[[RunContext, State], NodeResult]], ...] = (

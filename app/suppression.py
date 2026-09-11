@@ -7,7 +7,7 @@ operator marks a contact do-not-contact, and when a contact is erased on request
 
 import hashlib
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import ContactSuppression, User
@@ -36,3 +36,8 @@ def suppress(db: Session, linkedin_url: str, reason: str, user: User | None = No
     if db.scalar(select(ContactSuppression.id).where(ContactSuppression.linkedin_hash == digest)):
         return
     db.add(ContactSuppression(linkedin_hash=digest, reason=reason, created_by=user.id if user else None))
+
+
+def unsuppress(db: Session, linkedin_url: str) -> None:
+    """Undo a block — e.g. do-not-contact was set on the wrong person. The caller commits."""
+    db.execute(delete(ContactSuppression).where(ContactSuppression.linkedin_hash == fingerprint(linkedin_url)))

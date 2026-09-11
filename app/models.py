@@ -268,7 +268,11 @@ class Contact(Base):
     )
 
     startup: Mapped["Startup"] = relationship(back_populates="contacts")
-    email_events: Mapped[list["EmailEvent"]] = relationship(back_populates="contact")
+    # delete-orphan: email_events.contact_id is NOT NULL, so the default "nullify on parent delete"
+    # would break erasing a contact whose events happen to be loaded in the session.
+    email_events: Mapped[list["EmailEvent"]] = relationship(
+        back_populates="contact", cascade="all, delete-orphan"
+    )
 
 
 class EmailEvent(Base):

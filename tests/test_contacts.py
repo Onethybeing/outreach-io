@@ -319,8 +319,12 @@ def test_do_not_contact_can_be_set_and_undone(db, world, operator):
     assert marked.json()["do_not_contact"] is True
     assert operator.post(f"/contacts/{contact['id']}/email/lookup").status_code == 400
 
+    assert suppression.is_suppressed(db, contact["linkedin_url"])
+
     undone = operator.put(f"/contacts/{contact['id']}/do-not-contact", json={"do_not_contact": False})
     assert undone.json()["do_not_contact"] is False
+    # Undoing has to lift the block as well, or later runs and approvals would still refuse them.
+    assert not suppression.is_suppressed(db, contact["linkedin_url"])
 
 
 def test_erase_removes_the_person_and_their_emails(db, world, operator, make_user, login):

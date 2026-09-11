@@ -140,7 +140,7 @@ def poll_contact(db: Session, contact: Contact, sender_address: str, summary: Po
         summary.by_label[key] = summary.by_label.get(key, 0) + 1
         if label is not None:
             labels.append(label)
-    if contact.do_not_contact:
+    if ReplyClassification.unsubscribe in labels:
         # Outlives this contact row, so erasing them later can't undo the unsubscribe.
         suppression.suppress(db, contact.linkedin_url, "unsubscribe")
     db.commit()
