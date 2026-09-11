@@ -249,6 +249,8 @@ def _sse(client, url):
     kinds = []
     with client.stream("GET", url) as response:
         assert response.status_code == 200
+        # Without no-transform the dashboard's proxy gzips the stream and holds events back.
+        assert "no-transform" in response.headers["cache-control"]
         for line in response.iter_lines():
             if line.startswith("event: "):
                 kinds.append(line[7:])

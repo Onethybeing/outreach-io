@@ -1,0 +1,5 @@
+# Used by scripts/deploy_dashboard.sh — `gcloud builds submit --tag` can't pass build args.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "--build-arg", "API_ORIGIN=${_API_ORIGIN}", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
