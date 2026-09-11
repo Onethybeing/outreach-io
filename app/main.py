@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.prompts import PromptError
 from app.contacts.service import ActionError
-from app.routers import audit_log, auth, contacts, prompts, resumes, runs, users, vault
+from app.routers import audit_log, auth, contacts, prompts, replies, resumes, runs, users, vault
 from app.schemas import HealthOut
 from app.vault import VaultError
 
@@ -38,6 +38,7 @@ for router in (
     auth.router, users.router, audit_log.router, vault.router, prompts.router, resumes.router,
     runs.router, runs.candidates_router,
     contacts.candidates_router, contacts.contacts_router, contacts.settings_router,
+    replies.router, replies.internal_router,
 ):
     app.include_router(router)
 

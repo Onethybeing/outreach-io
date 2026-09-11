@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     google_login_client_id: str = ""
     google_login_client_secret: str = ""
     public_base_url: str = "http://localhost:8000"
+    # Shared secret for scheduler-triggered endpoints (/internal/*). Empty = those endpoints are off.
+    internal_task_token: str = ""
 
     # Provider keys: read only to seed the vault on first start.
     groq_api_key: str = ""

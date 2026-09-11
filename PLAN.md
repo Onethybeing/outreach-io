@@ -467,6 +467,14 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
     draft still needs human approval.
 35. CV file missing at send time → refused before anything is marked queued; a crash while writing
     marks the send failed, never stuck in queued; interrupted sends are failed at startup.
+36. Reply tracking only watches real sends (dev sends never reach a mailbox), for 60 days after
+    sending. It looks at messages from the contact's address, messages in the sent thread, and
+    bounce notices naming the address; each Gmail message is stored once (idempotent polls).
+37. Bounces and out-of-office replies are labeled by header/subject rules without an LLM call; an
+    unrecognised LLM label counts as a human reply (surfaced rather than dropped).
+38. Gmail sign-in expired during a poll → the poll stops and reports it; overlapping polls → 409.
+39. Known limit: classify_reply has no "other" label, so an automated non-bounce message from the
+    contact's own address (e.g. a newsletter) is counted as a reply.
 
 ---
 
@@ -481,7 +489,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 5. ✅ Draft generation (single + bulk), edit, approve; dev-mode send (`.eml` with CV attached, single + bulk).
 6. Dashboard: Library, Run Agent, Candidates, Contacts, Settings (Vault / Prompts / Users / Mode /
    Audit Log).
-7. Reply tracking + classification + Replies tab.
+7. ✅ Reply tracking + classification (backend: `POST /replies/poll`, `GET /replies`, scheduler endpoint
+   `POST /internal/poll-replies` with `INTERNAL_TASK_TOKEN`). Replies tab comes with the dashboard.
 8. Stats tab + Langfuse eval scoring.
 9. Deploy to Cloud Run on the `sourav.jhinjha@gmail.com` GCP project (dev mode only), on Python
    3.12 (Google's client libraries drop Python 3.10 support after 2026-10-04). Add a public
