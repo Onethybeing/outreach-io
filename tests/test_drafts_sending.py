@@ -252,15 +252,15 @@ def test_bulk_drafts_continue_after_an_unexpected_error(db, contact, make_user, 
     )
     db.add(second)
     db.commit()
-    calls = []
+    monkeypatch.setattr(llm, "complete_json", lambda *a, **k: {"subject": "Hi", "body": "Hello"})
+    real_generate = drafts.generate
 
-    def flaky(db_, model, prompt, temperature, max_tokens=4096, **kwargs):
-        calls.append(1)
-        if len(calls) == 1:
-            raise KeyError("choices")  # e.g. a malformed provider response
-        return {"subject": "Hi", "body": "Hello"}
+    def crash_on_first(db_, contact_id, user, force=False):
+        if contact_id == contact.id:
+            raise RuntimeError("not an ActionError")  # must be caught by the bulk loop itself
+        return real_generate(db_, contact_id, user, force)
 
-    monkeypatch.setattr(llm, "complete_json", flaky)
+    monkeypatch.setattr(drafts, "generate", crash_on_first)
     drafts.execute_bulk(db, [contact.id, second.id], make_user(UserRole.operator).id)
     db.refresh(contact)
     db.refresh(second)
