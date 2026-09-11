@@ -187,7 +187,10 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
     queries = [q for q in (clean, domain) if q]
     saved: dict[str, dict] = {}
     with telemetry.observation("apollo_saved_contacts_search", as_type="tool", input={"queries": queries}) as obs:
+        profile_found = False
         for query in queries:
+            if profile_found:
+                break  # the definitive match is in hand; further searches only cost requests
             for page in range(1, SAVED_SEARCH_PAGES + 1):
                 batch, total_pages = _search_saved_contacts(headers, query, page)
                 for c in batch:
@@ -197,6 +200,7 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
                     saved.setdefault(str(key), c)
                 if target and any(linkedin_profile_url(c.get("linkedin_url")) == target and _usable_email(c.get("email"))
                                   for c in batch):
+                    profile_found = True
                     break
                 if page >= total_pages:
                     break
@@ -212,8 +216,8 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
     if by_profile:
         # A person saved twice: prefer the copy whose email was actually revealed.
         match = next((c for c in by_profile if _usable_email(c.get("email"))), by_profile[0])
-    elif len(by_name) == 1:
-        match = by_name[0]
+    elif len({_usable_email(c.get("email")) for c in by_name}) == 1:
+        match = by_name[0]  # one person (possibly saved twice with the same email), not an ambiguous name
     else:
         match = None
     if match is None:

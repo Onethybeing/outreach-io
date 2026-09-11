@@ -481,6 +481,29 @@ def test_saved_contact_found_via_domain_query_despite_different_name(db, monkeyp
     assert queries == [("jane doe", 1), ("acme.example", 1)]
 
 
+def test_same_person_saved_twice_still_matches_by_name(db, monkeypatch):
+    copy = {"name": "Jane Doe", "linkedin_url": None, "email": "jane@acme.example"}
+    _saved_contacts(monkeypatch, [{**copy, "id": "a"}, {**copy, "id": "b"}])
+    result = apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/other", "acme.example")
+    assert result.found and result.email == "jane@acme.example"
+
+
+def test_profile_match_skips_the_remaining_searches(db, monkeypatch):
+    from app import vault
+
+    monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json["q_keywords"])
+        jane = {"id": "a", "name": "Jane Doe", "linkedin_url": "https://www.linkedin.com/in/jane", "email": "jane@acme.example"}
+        return httpx.Response(200, json={"contacts": [jane], "pagination": {"total_pages": 3}})
+
+    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    assert apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/jane", "acme.example").found
+    assert calls == ["jane doe"]  # no further pages and no domain query
+
+
 def test_duplicate_saved_copies_prefer_the_revealed_email(db, monkeypatch):
     profile = "https://www.linkedin.com/in/jane"
     _saved_contacts(monkeypatch, [
