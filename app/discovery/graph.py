@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app import llm, telemetry, vault
+from app import evals, llm, telemetry, vault
 from app.db import SessionLocal, engine
 from app.jobs import WorkerPool
 from app.discovery import tavily
@@ -464,6 +464,8 @@ def execute_run(db: Session, run_id: uuid.UUID) -> None:
             run.finished_at = _now()
         db.commit()
         telemetry.flush(client)
+    if run.status == RunStatus.completed:
+        evals.submit_run_startups(run.id)
 
 
 def run_in_background(run_id: uuid.UUID) -> None:

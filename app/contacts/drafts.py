@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, llm, prompts, telemetry, vault
+from app import audit, evals, llm, prompts, telemetry, vault
 from app.contacts.service import SENT, ActionError
 from app.db import SessionLocal
 from app.jobs import WorkerPool
@@ -93,10 +93,11 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
 
     client = telemetry.langfuse_client(db)
     tel = telemetry.RunTelemetry(langfuse=client)
+    trace_id = telemetry.trace_id_for(f"draft:{contact_id}:{_now().isoformat()}")
     try:
         with telemetry.activate(tel), telemetry.observation(
             "generate_draft_job", as_type="agent",
-            trace_context={"trace_id": telemetry.trace_id_for(f"draft:{contact_id}:{_now().isoformat()}")},
+            trace_context={"trace_id": trace_id},
             input={"contact": contact.name, "startup": startup.name, "cv": resume.filename},
         ) as root, telemetry.trace_attributes(
             trace_name="generate_draft", session_id=str(contact_id), tags=["contact", "draft"],
@@ -119,9 +120,11 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     contact.draft_prompt_version_id = uuid.UUID(state["prompt_id"])
     contact.draft_status, contact.draft_generated_at = DraftStatus.generated, _now()
     contact.draft_approved_at = contact.draft_approved_by = None
-    contact.draft_edited = False
+    contact.draft_edited, contact.draft_eval = False, None
+    contact.draft_trace_id = trace_id if client is not None else None
     audit.record(db, user, "drafts.generate", "contact", contact.id, {"prompt_id": state["prompt_id"], "force": force})
     db.commit()
+    evals.submit_draft(contact.id)
     return contact
 
 
@@ -141,10 +144,13 @@ def edit(db: Session, contact_id: uuid.UUID, subject: str, body: str, user: User
     changed = (subject, body) != (contact.draft_subject, contact.draft_text)
     if changed:
         contact.draft_subject, contact.draft_text, contact.draft_edited = subject, body, True
-        # Approval covered the old text; an edited draft needs a fresh look.
+        # Approval and the quality eval both covered the old text.
         contact.draft_status, contact.draft_approved_at, contact.draft_approved_by = DraftStatus.generated, None, None
+        contact.draft_eval = None
         audit.record(db, user, "drafts.edit", "contact", contact.id)
     db.commit()
+    if changed:
+        evals.submit_draft(contact.id)
     return contact
 
 
@@ -159,6 +165,7 @@ def approve(db: Session, contact_id: uuid.UUID, user: User) -> Contact:
     contact.draft_status, contact.draft_approved_by, contact.draft_approved_at = DraftStatus.approved, user.id, _now()
     audit.record(db, user, "drafts.approve", "contact", contact.id)
     db.commit()
+    evals.safe_signal(evals.record_draft_approved, db, contact)
     return contact
 
 

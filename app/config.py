@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     # Shared secret for scheduler-triggered endpoints (/internal/*). Empty = those endpoints are off.
     internal_task_token: str = ""
+    # LLM-as-judge evals after each discovery run and draft (extra Groq tokens). PLAN.md §11.
+    auto_evals: bool = True
 
     # Provider keys: read only to seed the vault on first start.
     groq_api_key: str = ""

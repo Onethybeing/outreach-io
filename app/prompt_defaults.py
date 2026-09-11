@@ -235,4 +235,74 @@ Return only a JSON object: {"label": "...", "summary": "one sentence"}""",
         model=LIGHT_MODEL,
         temperature=0.0,
     ),
+    # --- eval judges (PLAN.md §11) ---------------------------------------------------------
+    "eval_startup_relevance": NodeContract(
+        description="Eval judge: scores how well a discovered startup fits the candidate (0-1).",
+        required=("candidate_profile", "startup_name"),
+        optional=("startup_description", "startup_domain"),
+        sample={
+            "candidate_profile": SAMPLE_PROFILE,
+            "startup_name": "Acme Vector",
+            "startup_description": "Retrieval infrastructure for LLM apps.",
+            "startup_domain": "AI infrastructure",
+        },
+        template="""You are grading a job-search agent. Judge whether this startup is a good place for this
+candidate to apply, based only on the information given.
+
+Candidate profile (JSON):
+{{ candidate_profile }}
+
+Startup: {{ startup_name }}
+{% if startup_domain %}Domain: {{ startup_domain }}
+{% endif %}{% if startup_description %}What it does: {{ startup_description }}
+{% endif %}
+Scoring:
+- 1.0: the startup's product/domain clearly needs the candidate's target roles and skills
+- 0.5: adjacent domain, or the fit depends on details not shown
+- 0.0: unrelated domain, not a startup, or not enough information to see any fit
+
+Return only a JSON object: {"score": 0.0, "reason": "one sentence"}""",
+        model=LIGHT_MODEL,
+        temperature=0.0,
+    ),
+    "eval_draft_quality": NodeContract(
+        description="Eval judge: scores a cold email draft and lists claims the profile doesn't support.",
+        required=("candidate_profile", "email_subject", "email_body", "startup_name", "contact_name"),
+        optional=("startup_description",),
+        sample={
+            "candidate_profile": SAMPLE_PROFILE,
+            "email_subject": "RAG engineer for Acme",
+            "email_body": "Hi Jane, I built RAG pipelines at a dev-tools startup. Resume attached. 15 minutes this week?",
+            "startup_name": "Acme Vector",
+            "startup_description": "Retrieval infrastructure for LLM apps.",
+            "contact_name": "Jane Doe",
+        },
+        template="""You are grading a cold email a job candidate is about to send. Be strict.
+
+Candidate profile (JSON) — the only allowed source of facts about the candidate:
+{{ candidate_profile }}
+
+Recipient: {{ contact_name }} at {{ startup_name }}
+{% if startup_description %}What {{ startup_name }} does: {{ startup_description }}
+{% endif %}
+Subject: {{ email_subject }}
+Body:
+\"\"\"
+{{ email_body }}
+\"\"\"
+
+Grade:
+- personalization (1-5): specific, true link between the candidate and this startup (5) vs generic (1)
+- clarity (1-5): easy to read, one clear ask
+- tone (1-5): professional, confident, not pushy or flattering
+- length_ok: true if the body is roughly 60-160 words
+- unsupported_claims: every statement about the candidate that the profile does not support,
+  including separate facts merged into one claim. Empty list if none.
+- score (0-1): overall readiness to send; any unsupported claim caps it at 0.4
+
+Return only a JSON object:
+{"personalization": 1, "clarity": 1, "tone": 1, "length_ok": true, "unsupported_claims": [], "score": 0.0, "reason": "one sentence"}""",
+        model=HEAVY_MODEL,
+        temperature=0.0,
+    ),
 }

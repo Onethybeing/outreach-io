@@ -69,6 +69,17 @@ No real email is sent: prod mode refuses until real sending is explicitly approv
 | `GET /replies?classification=` | Inbound messages with contact, startup and reply status | all roles |
 | `POST /internal/poll-replies` + `X-Internal-Token` | Same check, for Cloud Scheduler; off unless `INTERNAL_TASK_TOKEN` is set | scheduler |
 
+**Phase 8** — stats and evals (`app/stats.py`, `app/evals.py`).
+
+| Route | What | Who |
+|---|---|---|
+| `GET /stats?days=30&resume_id=&include_dev=&fresh=` | KPIs, funnel, per-CV and per-prompt-version reply rates (with sample sizes), sends/replies per day, provider usage, agent health, quality | all roles |
+| `POST /evals/runs/{id}/startups` | Judge a completed run's startups (background) | admin, operator |
+| `POST /evals/contacts/{id}/draft` | Judge a draft now | admin, operator |
+
+Resume-parsing accuracy: `python scripts/eval_parse_resume.py [cases_dir] [--langfuse]` with labelled
+cases in `evals/parse_resume/cases/*.json` (format in the script's docstring).
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).

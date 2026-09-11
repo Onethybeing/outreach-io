@@ -9,7 +9,7 @@ from sqlalchemy import and_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, evals
 from app.contacts import apollo
 from app.db import SessionLocal
 from app.jobs import WorkerPool
@@ -84,6 +84,7 @@ def approve(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
     _decide(candidate, CandidateStatus.approved, user, contact)
     audit.record(db, user, "candidates.approve", "candidate", candidate.id, {"contact_id": str(contact.id)})
     db.commit()
+    evals.safe_signal(evals.record_candidate_decision, db, candidate, True)
     return contact
 
 
@@ -92,6 +93,7 @@ def reject(db: Session, candidate_id: uuid.UUID, user: User) -> Candidate:
     _decide(candidate, CandidateStatus.rejected, user, None)
     audit.record(db, user, "candidates.reject", "candidate", candidate.id)
     db.commit()
+    evals.safe_signal(evals.record_candidate_decision, db, candidate, False)
     return candidate
 
 
@@ -103,6 +105,7 @@ def reuse(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
     _decide(candidate, CandidateStatus.reused, user, contact)
     audit.record(db, user, "candidates.reuse", "candidate", candidate.id, {"contact_id": str(contact.id)})
     db.commit()
+    evals.safe_signal(evals.record_candidate_decision, db, candidate, True)
     return contact
 
 
@@ -131,6 +134,7 @@ def update_existing(db: Session, candidate_id: uuid.UUID, user: User) -> Contact
     _decide(candidate, CandidateStatus.updated, user, contact)
     audit.record(db, user, "candidates.update_contact", "candidate", candidate.id, {"contact_id": str(contact.id)})
     db.commit()
+    evals.safe_signal(evals.record_candidate_decision, db, candidate, True)
     return contact
 
 

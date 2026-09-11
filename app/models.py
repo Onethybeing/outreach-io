@@ -179,6 +179,9 @@ class Startup(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     relevance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # LLM-as-judge score (0-1) from eval_startup_relevance, independent of discovery's own relevance.
+    relevance_judge: Mapped[float | None] = mapped_column(Float, nullable=True)
+    relevance_judge_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The company's LinkedIn page, used to verify employment; looked up once (enriched_at set even if none found).
     linkedin_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     company_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -232,6 +235,8 @@ class Contact(Base):
     draft_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # A person changed the AI draft before approving — a quality signal for evals (PLAN.md §11).
     draft_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    draft_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Langfuse trace of the generation
+    draft_eval: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # eval_draft_quality result
     draft_prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("prompts.id"), nullable=True
     )
