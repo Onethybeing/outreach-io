@@ -143,6 +143,15 @@ function SignIn() {
       <a href="/auth/login" className={buttonVariants()}>
         Sign in with Google
       </a>
+      <p className="text-xs text-muted-foreground">
+        <Link href="/about" className="underline">
+          About
+        </Link>{" "}
+        ·{" "}
+        <Link href="/privacy" className="underline">
+          Privacy
+        </Link>
+      </p>
     </Centered>
   )
 }
