@@ -92,7 +92,7 @@ takes effect on the next node call without a redeploy.
 | **BrightData** | LinkedIn profile scrape (employment verification fallback) | ✅ received |
 | **Neon Postgres** | Primary database | ✅ received — migration applied and verified |
 | **Apollo.io** | Email lookup + employment verification (primary) | ✅ received — key valid; whether the plan tier allows email reveal is checked on one real contact in Phase 4 |
-| **Gmail OAuth client** (client ID/secret + refresh token for the sending account) | Send mail, read replies | ❌ still needed (Phase 5) |
+| **Gmail OAuth** (sender `sourav.jhinjha@gmail.com`) | Send mail, read replies | ✅ signed in, refresh token verified — consent screen is in Testing, so the token expires every 7 days until the app is published (Phase 9) |
 | **Langfuse** (US cloud, project `outreach.io`) | Tracing + evals | ✅ received — key valid |
 | **GCP** — account `sourav.jhinjha@gmail.com` (free credits, billing set up) | Cloud Run, Secret Manager, Cloud Scheduler, Artifact Registry, Cloud SQL backup | ❌ needs a one-time `gcloud auth login` by you at deploy time |
 
@@ -391,6 +391,9 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
     provider using the vault's rotate flow.
 18. Missing provider key → dependent buttons disabled with a clear reason, not a mid-run crash.
 19. Rates on small samples always shown with their sample size.
+20. Gmail refresh token expired or revoked (7-day limit while the Google app is in Testing) →
+    `send_email` and `track_replies` stop with a "Gmail sign-in expired" banner instead of
+    failing silently; sends stay queued until it's renewed.
 
 ---
 
@@ -406,5 +409,8 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
    Audit Log).
 7. Reply tracking + classification + Replies tab.
 8. Stats tab + Langfuse eval scoring.
-9. Deploy to Cloud Run on the `sourav.jhinjha@gmail.com` GCP project (dev mode only).
+9. Deploy to Cloud Run on the `sourav.jhinjha@gmail.com` GCP project (dev mode only), on Python
+   3.12 (Google's client libraries drop Python 3.10 support after 2026-10-04). Add a public
+   homepage + privacy policy page, fill them into the Google consent screen's Branding page, and
+   publish the Google app so the Gmail refresh token stops expiring.
 10. Only after your explicit approval: switch to prod mode, first real send.
