@@ -32,7 +32,7 @@ LOOKUP_ERR="$(mktemp)"
 trap 'rm -f "$LOOKUP_ERR"' EXIT
 if DASHBOARD_URL="$(gcloud run services describe "$DASHBOARD_SERVICE" --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>"$LOOKUP_ERR")"; then
   :
-elif grep -qiE "not found|NOT_FOUND" "$LOOKUP_ERR"; then
+elif grep -qiE "cannot find service|not found|NOT_FOUND" "$LOOKUP_ERR"; then
   DASHBOARD_URL=""   # not deployed yet
 else
   cat "$LOOKUP_ERR" >&2
