@@ -91,9 +91,9 @@ takes effect on the next node call without a redeploy.
 | **Tavily** | Web search for startups + KDMs | ✅ received |
 | **BrightData** | LinkedIn profile scrape (employment verification fallback) | ✅ received |
 | **Neon Postgres** | Primary database | ✅ received — migration applied and verified |
-| **Apollo.io** | Email lookup + employment verification (primary) | ❌ still needed — without it, no email lookup (manual entry only) |
+| **Apollo.io** | Email lookup + employment verification (primary) | ✅ received — key valid; whether the plan tier allows email reveal is checked on one real contact in Phase 4 |
 | **Gmail OAuth client** (client ID/secret + refresh token for the sending account) | Send mail, read replies | ❌ still needed (Phase 5) |
-| **Langfuse** (public + secret key) | Tracing + evals | ❌ still needed — Langfuse Cloud free hobby tier is enough |
+| **Langfuse** (US cloud, project `outreach.io`) | Tracing + evals | ✅ received — key valid |
 | **GCP** — account `sourav.jhinjha@gmail.com` (free credits, billing set up) | Cloud Run, Secret Manager, Cloud Scheduler, Artifact Registry, Cloud SQL backup | ❌ needs a one-time `gcloud auth login` by you at deploy time |
 
 Anthropic is no longer required — Groq covers LLM calls. The code keeps the LLM behind one small
