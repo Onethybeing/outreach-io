@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Float, and_, case, cast, func, select
+from sqlalchemy import Float, and_, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -145,7 +145,7 @@ def build(db: Session, days: int = 30, resume_id: uuid.UUID | None = None, inclu
     replies_by_day = {
         d.date().isoformat(): n
         for d, n in db.execute(
-            select(reply_day, func.count()).where(Contact.replied_at >= since, *contact_filter[1:]).group_by(reply_day)
+            select(reply_day, func.count()).where(is_sent, Contact.replied_at >= since, *contact_filter[1:]).group_by(reply_day)
         )
     }
     over_time = [
@@ -165,7 +165,8 @@ def build(db: Session, days: int = 30, resume_id: uuid.UUID | None = None, inclu
     ) or 0
     lookups = db.execute(
         select(func.count(), func.count().filter(Contact.email_lookup_status == EmailLookupStatus.found))
-        .where(Contact.email_looked_up_at >= since, Contact.email_source != "manual")
+        # Misses leave email_source NULL; `!= 'manual'` alone would silently drop them (NULL comparison).
+        .where(Contact.email_looked_up_at >= since, or_(Contact.email_source.is_(None), Contact.email_source != "manual"))
     ).one()
     usage["email_lookup_hit_rate"] = rate(lookups[1], lookups[0])
     verifications = db.execute(

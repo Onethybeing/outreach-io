@@ -210,6 +210,28 @@ def test_stats_numbers_for_one_resume(db, world, make_user, login):
     assert login(make_user(UserRole.viewer)).get(f"/stats?resume_id={world['resume'].id}").status_code == 200
 
 
+def test_stats_counts_unjudged_misses_and_dev_replies_correctly(db, world):
+    from app import stats
+    from app.models import EmailLookupStatus
+
+    now = datetime.now(timezone.utc)
+    cleared = _contact(db, world, draft_subject="s", draft_text="t", draft_status=DraftStatus.generated,
+                       draft_eval={"score": 0.5, "unsupported_claims": []})
+    cleared.draft_eval = None  # e.g. after an edit; must be SQL NULL, not JSON null
+    db.commit()
+    _contact(db, world, email="hit@acme.example", email_source="apollo", email_lookup_status=EmailLookupStatus.found, email_looked_up_at=now)
+    _contact(db, world, email_lookup_status=EmailLookupStatus.not_found, email_looked_up_at=now)  # miss: email_source NULL
+    _contact(db, world, email="m@acme.example", email_source="manual", email_lookup_status=EmailLookupStatus.found, email_looked_up_at=now)
+    _contact(db, world, send_status=SendStatus.sent_dev, sent_at=now, reply_status=ReplyStatus.replied, replied_at=now)
+
+    s = stats.build(db, days=3, resume_id=world["resume"].id)
+    assert s["quality"]["draft_score_avg"]["n"] == 0
+    assert s["quality"]["drafts_with_unsupported_claims"] == {"value": None, "n": 0}
+    # 1 hit + 1 miss counted; the manual entry is not a lookup.
+    assert s["providers"]["email_lookup_hit_rate"] == {"value": 0.5, "n": 2}
+    assert sum(d["replied"] for d in s["over_time"]) == 0  # the reply to a dev send is excluded by default
+
+
 def test_eval_endpoints_guard_state(db, world, make_user, login):
     operator = login(make_user(UserRole.operator))
     contact = _contact(db, world)

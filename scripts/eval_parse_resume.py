@@ -37,7 +37,7 @@ def main() -> None:
             actual = llm.complete_json(db, prompt.model, rendered, prompt.temperature, name="parse_resume_eval")
             result = score_case(case["expected"], actual)
             results.append((name, result))
-            if client:
+            if client and result["overall"] is not None:
                 trace_id = telemetry.trace_id_for(f"parse-eval:{name}:{prompt.id}")
                 telemetry.score(client, trace_id, "parse_accuracy", result["overall"] or 0.0,
                                 comment=f"{name} · prompt v{prompt.version} · {json.dumps(result['fields'])}")
@@ -45,10 +45,16 @@ def main() -> None:
 
     print(f"parse_resume prompt v{prompt.version} ({prompt.model})")
     for name, result in results:
+        if result["overall"] is None:
+            print(f"  {name:30} no scorable fields in 'expected' (check field names)")
+            continue
         fields = "  ".join(f"{k}={v:.2f}" for k, v in result["fields"].items())
         print(f"  {name:30} overall={result['overall']:.2f}  {fields}")
     scored = [r["overall"] for _, r in results if r["overall"] is not None]
-    print(f"mean overall: {sum(scored) / len(scored):.3f} over {len(scored)} case(s)")
+    if scored:
+        print(f"mean overall: {sum(scored) / len(scored):.3f} over {len(scored)} case(s)")
+    else:
+        print("no case had scorable fields")
 
 
 if __name__ == "__main__":

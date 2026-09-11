@@ -110,25 +110,23 @@ def judge_draft(db: Session, contact_id: uuid.UUID) -> dict | None:
 
 # --- human signals (free labels, PLAN.md §11 #3-5) ---------------------------------------------
 
+# No flush() in these: they run inside user requests and reply polls, and flush() blocks on the
+# Langfuse API. The client's own background batching delivers the scores.
+
 def record_candidate_decision(db: Session, candidate: Candidate, approved: bool) -> None:
     run = db.get(Run, candidate.run_id)
-    client = telemetry.langfuse_client(db)
-    telemetry.score(client, run.langfuse_trace_id if run else None, "kdm_approved", 1.0 if approved else 0.0,
-                    data_type="BOOLEAN", comment=candidate.name)
-    telemetry.flush(client)
+    telemetry.score(telemetry.langfuse_client(db), run.langfuse_trace_id if run else None, "kdm_approved",
+                    1.0 if approved else 0.0, data_type="BOOLEAN", comment=candidate.name)
 
 
 def record_draft_approved(db: Session, contact: Contact) -> None:
-    client = telemetry.langfuse_client(db)
-    telemetry.score(client, contact.draft_trace_id, "draft_edited_before_approval", 1.0 if contact.draft_edited else 0.0,
-                    data_type="BOOLEAN")
-    telemetry.flush(client)
+    telemetry.score(telemetry.langfuse_client(db), contact.draft_trace_id, "draft_edited_before_approval",
+                    1.0 if contact.draft_edited else 0.0, data_type="BOOLEAN")
 
 
 def record_reply(db: Session, contact: Contact, label: ReplyClassification) -> None:
-    client = telemetry.langfuse_client(db)
-    telemetry.score(client, contact.draft_trace_id, "reply_outcome", label.value, data_type="CATEGORICAL")
-    telemetry.flush(client)
+    telemetry.score(telemetry.langfuse_client(db), contact.draft_trace_id, "reply_outcome", label.value,
+                    data_type="CATEGORICAL")
 
 
 # --- background triggers ---------------------------------------------------------------------

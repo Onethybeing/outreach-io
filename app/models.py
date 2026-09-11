@@ -236,7 +236,9 @@ class Contact(Base):
     # A person changed the AI draft before approving — a quality signal for evals (PLAN.md §11).
     draft_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     draft_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Langfuse trace of the generation
-    draft_eval: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # eval_draft_quality result
+    # eval_draft_quality result. none_as_null: clearing it must store SQL NULL, not JSON 'null',
+    # or "not judged" rows would count as judged in stats.
+    draft_eval: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     draft_prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("prompts.id"), nullable=True
     )
