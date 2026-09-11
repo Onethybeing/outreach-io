@@ -5,6 +5,7 @@ Checked live on this account: organizations/enrich → 200; people/match and mix
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -128,6 +129,40 @@ def find_email(db: Session, name: str, linkedin_url: str, website: str | None) -
         return EmailResult(True, email, f"Found by Apollo (status: {status or 'unknown'})")
 
 
+SAVED_SEARCH_PAGES = 3
+SAVED_SEARCH_PER_PAGE = 100
+_NAME_NOISE = re.compile(r"\([^)]*\)|\b(dr|mr|mrs|ms|prof|phd|mba|md|jr|sr|ii|iii|cfa|cpa|pmp)\b\.?", re.I)
+
+
+def _clean_person_name(name: str) -> str:
+    """'Dr. Jane Doe, PhD (she/her)' → 'jane doe'."""
+    return " ".join(re.sub(r"[^\w\s'-]", " ", _NAME_NOISE.sub(" ", name.lower())).split())
+
+
+def _search_saved_contacts(headers: dict, query: str, page: int) -> tuple[list[dict], int]:
+    try:
+        telemetry.heartbeat()
+        response = httpx.post(f"{BASE}/contacts/search", headers=headers, timeout=30,
+                              json={"q_keywords": query, "per_page": SAVED_SEARCH_PER_PAGE, "page": page})
+    except httpx.HTTPError as exc:
+        raise EmailLookupError(f"Could not reach Apollo: {type(exc).__name__}")
+    if response.status_code == 401:
+        raise ProviderUnavailable("Apollo rejected the API key — check Settings → Vault")
+    if response.status_code == 403:
+        raise ProviderUnavailable("Apollo refused the contacts search (HTTP 403)")
+    if response.status_code == 429:
+        raise EmailLookupError("Apollo rate limit reached — try again later")
+    if response.status_code != 200:
+        raise EmailLookupError(f"Apollo error (HTTP {response.status_code})")
+    try:
+        body = response.json()
+        contacts = [c for c in (body.get("contacts") or []) if isinstance(c, dict)]
+        total_pages = int((body.get("pagination") or {}).get("total_pages") or 1)
+    except (ValueError, AttributeError, TypeError):
+        raise EmailLookupError("Apollo returned an unreadable response")
+    return contacts, total_pages
+
+
 def _usable_email(value: str | None) -> str | None:
     email = (value or "").strip().lower()
     return email if email and "@" in email and "not_unlocked" not in email else None
@@ -143,36 +178,44 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
         headers = _headers(db)
     except (vault.VaultError, KeyError) as exc:
         raise ProviderUnavailable(f"Apollo is not configured — add its key in Settings → Vault ({exc})")
-    with telemetry.observation("apollo_saved_contacts_search", as_type="tool", input={"name": name}) as obs:
-        try:
-            telemetry.heartbeat()
-            response = httpx.post(f"{BASE}/contacts/search", headers=headers,
-                                  json={"q_keywords": name, "per_page": 25}, timeout=30)
-        except httpx.HTTPError as exc:
-            raise EmailLookupError(f"Could not reach Apollo: {type(exc).__name__}")
-        if response.status_code == 401:
-            raise ProviderUnavailable("Apollo rejected the API key — check Settings → Vault")
-        if response.status_code == 403:
-            raise ProviderUnavailable("Apollo refused the contacts search (HTTP 403)")
-        if response.status_code == 429:
-            raise EmailLookupError("Apollo rate limit reached — try again later")
-        if response.status_code != 200:
-            raise EmailLookupError(f"Apollo error (HTTP {response.status_code})")
-        try:
-            saved = [c for c in (response.json().get("contacts") or []) if isinstance(c, dict)]
-        except (ValueError, AttributeError):
-            raise EmailLookupError("Apollo returned an unreadable response")
-        obs.update(output={"saved_matches": len(saved)})
 
     target = linkedin_profile_url(linkedin_url)
-    by_profile = [c for c in saved if target and linkedin_profile_url(c.get("linkedin_url")) == target]
     domain = website_domain(website)
+    clean = _clean_person_name(name)
+    # By name first; the startup's domain as a second query catches contacts saved under another
+    # spelling of the name (searching matches emails/companies too). Several pages per query.
+    queries = [q for q in (clean, domain) if q]
+    saved: dict[str, dict] = {}
+    with telemetry.observation("apollo_saved_contacts_search", as_type="tool", input={"queries": queries}) as obs:
+        for query in queries:
+            for page in range(1, SAVED_SEARCH_PAGES + 1):
+                batch, total_pages = _search_saved_contacts(headers, query, page)
+                for c in batch:
+                    # The same person comes back from both queries; dedupe on stable content, not object identity.
+                    key = c.get("id") or linkedin_profile_url(c.get("linkedin_url")) or _usable_email(c.get("email")) \
+                        or _clean_person_name(str(c.get("name") or ""))
+                    saved.setdefault(str(key), c)
+                if target and any(linkedin_profile_url(c.get("linkedin_url")) == target and _usable_email(c.get("email"))
+                                  for c in batch):
+                    break
+                if page >= total_pages:
+                    break
+        obs.update(output={"saved_contacts_seen": len(saved)})
+
+    contacts = list(saved.values())
+    by_profile = [c for c in contacts if target and linkedin_profile_url(c.get("linkedin_url")) == target]
     by_name = [
-        c for c in saved
-        if " ".join(str(c.get("name") or "").lower().split()) == " ".join(name.lower().split())
+        c for c in contacts
+        if _clean_person_name(str(c.get("name") or "")) == clean
         and (email := _usable_email(c.get("email"))) and domain and email.endswith("@" + domain)
     ]
-    match = by_profile[0] if by_profile else by_name[0] if len(by_name) == 1 else None
+    if by_profile:
+        # A person saved twice: prefer the copy whose email was actually revealed.
+        match = next((c for c in by_profile if _usable_email(c.get("email"))), by_profile[0])
+    elif len(by_name) == 1:
+        match = by_name[0]
+    else:
+        match = None
     if match is None:
         return EmailResult(False, None, "Not in your saved Apollo contacts yet — reveal the email on apollo.io, "
                                         "save the person, then look up again", retryable=True)

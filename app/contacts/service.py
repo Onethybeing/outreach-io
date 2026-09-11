@@ -227,7 +227,7 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
         contact.email, contact.email_source = result.email, provider
         contact.email_lookup_status = EmailLookupStatus.found
     elif result.retryable:
-        contact.email_lookup_status = EmailLookupStatus.failed  # free to try again later
+        contact.email_lookup_status = EmailLookupStatus.awaiting_user  # user action needed; free to retry
     else:
         contact.email_lookup_status = EmailLookupStatus.not_found
     audit.record(db, user, "contacts.email_lookup", "contact", contact.id, {"provider": provider, "found": result.found})
@@ -255,7 +255,7 @@ def bulk_lookup_eligible(db: Session, contact_ids: list[uuid.UUID] | None = None
     query = select(Contact.id).where(
         Contact.verification_status == VerificationStatus.verified,
         Contact.email.is_(None),
-        Contact.email_lookup_status.in_([EmailLookupStatus.not_run, EmailLookupStatus.failed]),
+        Contact.email_lookup_status.in_([EmailLookupStatus.not_run, EmailLookupStatus.failed, EmailLookupStatus.awaiting_user]),
         Contact.do_not_contact.is_(False),
     )
     if contact_ids is not None:
@@ -298,7 +298,7 @@ VIEWS = ("active", "sent", "no_email", "all")
 def view_condition(view: str):
     no_email = and_(
         Contact.email.is_(None),
-        Contact.email_lookup_status.in_([EmailLookupStatus.not_found, EmailLookupStatus.failed]),
+        Contact.email_lookup_status.in_([EmailLookupStatus.not_found, EmailLookupStatus.failed, EmailLookupStatus.awaiting_user]),
         Contact.send_status.notin_(SENT),
     )
     if view == "sent":

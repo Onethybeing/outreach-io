@@ -165,10 +165,11 @@ def build(db: Session, days: int = 30, resume_id: uuid.UUID | None = None, inclu
     ) or 0
     lookups = db.execute(
         select(func.count(), func.count().filter(Contact.email_lookup_status == EmailLookupStatus.found))
-        # Only lookups the provider actually answered: failed attempts (errors, plan limits, restarts)
+        # Lookups that got an answer: a hit, a provider miss, or "not in your saved Apollo contacts"
+        # (awaiting_user, a miss for this provider). Failed attempts (errors, plan limits, restarts)
         # aren't misses, and manual entry never changes this status.
-        .where(Contact.email_looked_up_at >= since,
-               Contact.email_lookup_status.in_([EmailLookupStatus.found, EmailLookupStatus.not_found]))
+        .where(Contact.email_looked_up_at >= since, Contact.email_lookup_status.in_(
+            [EmailLookupStatus.found, EmailLookupStatus.not_found, EmailLookupStatus.awaiting_user]))
     ).one()
     usage["email_lookup_hit_rate"] = rate(lookups[1], lookups[0])
     verifications = db.execute(

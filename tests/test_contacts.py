@@ -463,11 +463,40 @@ def test_saved_contact_without_revealed_email_is_retryable(db, monkeypatch):
     assert not result.found and result.retryable and "reveal" in result.note
 
 
-def test_retryable_miss_is_failed_not_not_found_and_can_retry(db, world, operator):
+def test_saved_contact_found_via_domain_query_despite_different_name(db, monkeypatch):
+    from app import vault
+
+    monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
+    queries = []
+    jane = {"id": "c1", "name": "Jane Doe", "linkedin_url": "https://www.linkedin.com/in/jane-doe", "email": "jane@acme.example"}
+
+    def fake_post(url, json=None, **kwargs):
+        queries.append((json["q_keywords"], json["page"]))
+        found = [jane] if json["q_keywords"] == "acme.example" else []
+        return httpx.Response(200, json={"contacts": found, "pagination": {"total_pages": 1}})
+
+    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    result = apollo.find_email_in_saved_contacts(db, "Dr. Jane Doe, PhD", "https://uk.linkedin.com/in/Jane-Doe", "https://www.acme.example")
+    assert result.found and result.email == "jane@acme.example"
+    assert queries == [("jane doe", 1), ("acme.example", 1)]
+
+
+def test_duplicate_saved_copies_prefer_the_revealed_email(db, monkeypatch):
+    profile = "https://www.linkedin.com/in/jane"
+    _saved_contacts(monkeypatch, [
+        {"id": "a", "name": "Jane", "linkedin_url": profile, "email": "email_not_unlocked@domain.com"},
+        {"id": "b", "name": "Jane", "linkedin_url": profile, "email": "jane@acme.example"},
+    ])
+    assert apollo.find_email_in_saved_contacts(db, "Jane", profile, None).email == "jane@acme.example"
+
+
+def test_retryable_miss_is_awaiting_user_and_can_retry(db, world, operator):
     world["state"]["email"] = apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet", retryable=True)
     contact_id = _verified_contact(operator, world)
     first = operator.post(f"/contacts/{contact_id}/email/lookup")
-    assert first.status_code == 200 and first.json()["email_lookup_status"] == "failed"
+    assert first.status_code == 200 and first.json()["email_lookup_status"] == "awaiting_user"
+    assert uuid.UUID(contact_id) in service.bulk_lookup_eligible(db, [uuid.UUID(contact_id)])
+    assert contact_id in {c["id"] for c in operator.get("/contacts?view=no_email").json()}
     world["state"]["email"] = apollo.EmailResult(True, "simon@powerfulmedical.com", "Found in saved Apollo contacts")
     second = operator.post(f"/contacts/{contact_id}/email/lookup")  # no force needed
     assert second.status_code == 200 and second.json()["email"] == "simon@powerfulmedical.com"

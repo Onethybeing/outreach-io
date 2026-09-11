@@ -54,6 +54,7 @@ class EmailLookupStatus(str, enum.Enum):
     found = "found"
     not_found = "not_found"  # provider answered: no email for this person
     failed = "failed"  # couldn't ask (error, plan limit) — retryable
+    awaiting_user = "awaiting_user"  # needs a step from the user first (e.g. save/reveal in Apollo) — retryable, free
 
 
 class VerificationStatus(str, enum.Enum):

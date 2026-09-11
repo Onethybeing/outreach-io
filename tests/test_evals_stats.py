@@ -223,14 +223,15 @@ def test_stats_counts_unjudged_misses_and_dev_replies_correctly(db, world):
     # A paid miss, later fixed by typing the email in: still a miss for the provider.
     _contact(db, world, email="m@acme.example", email_source="manual", email_lookup_status=EmailLookupStatus.not_found, email_looked_up_at=now)
     _contact(db, world, email_lookup_status=EmailLookupStatus.failed, email_looked_up_at=now)  # provider never answered
+    _contact(db, world, email_lookup_status=EmailLookupStatus.awaiting_user, email_looked_up_at=now)  # not saved in Apollo: a miss
     _contact(db, world, email="only-manual@acme.example", email_source="manual")  # no lookup at all
     _contact(db, world, send_status=SendStatus.sent_dev, sent_at=now, reply_status=ReplyStatus.replied, replied_at=now)
 
     s = stats.build(db, days=3, resume_id=world["resume"].id)
     assert s["quality"]["draft_score_avg"]["n"] == 0
     assert s["quality"]["drafts_with_unsupported_claims"] == {"value": None, "n": 0}
-    # 1 hit + 1 miss; the failed attempt and the manual-only contact aren't lookups the provider answered.
-    assert s["providers"]["email_lookup_hit_rate"] == {"value": 0.5, "n": 2}
+    # 1 hit + 2 misses (not_found, awaiting_user); the failed attempt and the manual-only contact aren't counted.
+    assert s["providers"]["email_lookup_hit_rate"] == {"value": 0.333, "n": 3}
     assert sum(d["replied"] for d in s["over_time"]) == 0  # the reply to a dev send is excluded by default
 
 
