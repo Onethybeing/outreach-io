@@ -231,8 +231,10 @@ What each role can see and click is in §9.
 ## 6. Dev vs. Prod mode
 
 - Global toggle in `app_settings`, defaults to **Dev**. Only admins can change it.
-- **Dev mode:** `send_email` never calls the Gmail send API — it writes an `.eml` file and marks
-  `send_status = sent_dev`, so drafts and the tracking UI are fully testable without risk.
+- **Dev mode:** `send_email` never calls the Gmail send API — it writes a complete `.eml` (From,
+  To, Subject, body, the CV used for that contact attached) to `storage/outbox/`, records an
+  outbound email event, and marks `send_status = sent_dev`. Built in Phase 5; real Gmail sending is
+  not wired in yet, and prod mode currently refuses to send.
 - **Prod mode:** needs the toggle *and* a second confirmation modal before the first real send in
   a session. Every real send is audit-logged.
 - No real email is sent until you explicitly say so.
@@ -458,6 +460,13 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 31. Server restarts during verification or lookup → marked failed with "run it again".
 32. "Update" on a contact that was already emailed → email/draft reset for the new company, but
     send history and do-not-contact are kept, so a re-send still needs an explicit force.
+33. Draft regenerated or edited after approval → approval is cleared; it must be approved again.
+    Human edits set `draft_edited` (tracked for evals).
+34. The model merges unrelated resume facts into one invented claim → prompt rule against it (seen
+    in a live draft); remaining risk is measured by the Phase 8 no-hallucination eval, and every
+    draft still needs human approval.
+35. CV file missing at send time → refused before anything is marked queued; a crash while writing
+    marks the send failed, never stuck in queued; interrupted sends are failed at startup.
 
 ---
 
@@ -469,7 +478,7 @@ run, and prompt version**. Dev-mode sends are excluded by default (toggle to inc
 3. ✅ `discovery_graph` (resume ingest → profile → startups → KDMs → dedupe), tested via API + Langfuse.
 4. ✅ Candidate approve / reject / reuse / update → contacts; verification (Apollo company page +
    BrightData profile + LLM tie-break); provider-agnostic email lookup; manual email.
-5. Draft generation + dev-mode send (`.eml`, no real send).
+5. ✅ Draft generation (single + bulk), edit, approve; dev-mode send (`.eml` with CV attached, single + bulk).
 6. Dashboard: Library, Run Agent, Candidates, Contacts, Settings (Vault / Prompts / Users / Mode /
    Audit Log).
 7. Reply tracking + classification + Replies tab.

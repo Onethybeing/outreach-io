@@ -226,7 +226,12 @@ class Contact(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     draft_status: Mapped[DraftStatus] = mapped_column(Enum(DraftStatus), default=DraftStatus.none)
+    draft_subject: Mapped[str | None] = mapped_column(String(200), nullable=True)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    draft_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A person changed the AI draft before approving — a quality signal for evals (PLAN.md §11).
+    draft_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     draft_prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("prompts.id"), nullable=True
     )

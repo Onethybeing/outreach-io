@@ -47,6 +47,20 @@ email lookup.
 Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
 Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §3.
 
+**Phase 5** — drafts and dev-mode sending (`app/contacts/drafts.py`, `sending.py`).
+
+| Route | What | Who |
+|---|---|---|
+| `POST /contacts/{id}/draft/generate?force=` | Write a draft with the active `generate_draft` prompt | admin, operator |
+| `PUT /contacts/{id}/draft` `{subject, body}` | Edit (clears approval, marks edited) | admin, operator |
+| `POST /contacts/{id}/draft/approve` | Approve for sending | admin, operator |
+| `POST /contacts/drafts/generate-bulk` `{dry_run, contact_ids?}` | Drafts for everyone with an email and no draft | admin, operator |
+| `POST /contacts/{id}/send?force=` | Dev mode: write `storage/outbox/*.eml` with the CV attached | admin, operator |
+| `POST /contacts/send-approved` `{dry_run, contact_ids?}` | Send every approved, unsent draft | admin, operator |
+| `GET /contacts/{id}/emails` | Sent/received emails for a contact | all roles |
+
+No real email is sent: prod mode refuses until real sending is explicitly approved.
+
 On startup the app checks `VAULT_MASTER_KEY` / `SESSION_SECRET`, makes `INITIAL_ADMIN_EMAIL` an
 admin if there is no active admin, seeds version 1 of every node prompt, and imports provider keys
 from `.env` into the vault (once per provider).
