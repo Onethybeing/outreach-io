@@ -23,12 +23,15 @@ from app.storage import OUTBOX_PREFIX, get_storage
 logger = logging.getLogger(__name__)
 
 EMAIL_PROVIDERS = {
-    # Works on Apollo's free plan: emails revealed on apollo.io and saved as contacts.
+    # Saved contacts first, then a fresh lookup for anyone not saved. The fresh half needs a paid
+    # Apollo plan; on the free plan it says so instead of reporting a plain miss.
+    "apollo": apollo.find_email_saved_then_fresh,
+    # Saved contacts only: never touches the paid endpoint, so it can't spend a credit.
     "apollo_saved_contacts": apollo.find_email_in_saved_contacts,
-    # Automatic lookup; needs a paid Apollo plan (people/match is blocked on free).
-    "apollo": apollo.find_email,
+    # Fresh lookup only, skipping saved contacts. Needs a paid plan.
+    "apollo_fresh_only": apollo.find_email,
 }
-DEFAULT_EMAIL_PROVIDER = "apollo_saved_contacts"
+DEFAULT_EMAIL_PROVIDER = "apollo"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
 SENT = (SendStatus.sent, SendStatus.sent_dev)
 

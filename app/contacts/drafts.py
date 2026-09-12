@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
@@ -31,6 +32,55 @@ def clean_subject(subject: str) -> str:
     return " ".join(subject.split())
 
 
+_BULLET = re.compile(r"^\s*(?:[-*•·]|\d+[.)])\s+")
+_CLOSING = re.compile(r"^(best|regards|kind regards|best regards|thanks|thank you|sincerely|cheers|"
+                      r"warmly|yours|all the best|many thanks)\b", re.I)
+SIGNATURE_LINE = 40  # a name or sign-off is short; a wrapped sentence usually isn't
+
+
+def _is_signature(block: list[str]) -> bool:
+    """The closing block: a sign-off and a name.
+
+    Requiring the opening word to read as a sign-off (or at least to end in a comma, as almost all
+    of them do) keeps a short final paragraph from being mistaken for one and left broken.
+    """
+    if len(block) > 4 or any(len(line) > SIGNATURE_LINE for line in block):
+        return False
+    # A closing is a couple of words ("Best regards,"). The word limit keeps a short sentence that
+    # happens to end a line on a comma ("Is there a role open,") from looking like one.
+    return bool(_CLOSING.match(block[0])) or (block[0].endswith(",") and len(block[0].split()) <= 3)
+
+
+def unwrap_paragraphs(body: str) -> str:
+    """Undo hard wrapping inside a paragraph, keeping the breaks that were meant.
+
+    Models wrap the body at a width of their own choosing. The reader's client then wraps it again
+    at a different width, and the result is sentences broken in the middle. Working a paragraph at a
+    time rather than guessing line by line: prose is joined into one line and left to the client,
+    while blank-line gaps, bullet lists and the closing sign-off keep their breaks.
+    """
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped:
+            current.append(stripped)
+        elif current:
+            blocks.append(current)
+            current = []
+    if current:
+        blocks.append(current)
+
+    out: list[str] = []
+    for index, block in enumerate(blocks):
+        last = index == len(blocks) - 1
+        if any(_BULLET.match(line) for line in block) or (last and _is_signature(block)):
+            out.append("\n".join(block))
+        else:
+            out.append(" ".join(block))
+    return "\n\n".join(out).strip()
+
+
 def _check_can_draft(contact: Contact, force: bool) -> None:
     if contact.do_not_contact:
         raise ActionError(400, "This contact asked not to be contacted")
@@ -51,7 +101,10 @@ class State(TypedDict, total=False):
     prompt_id: str
 
 
-def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume):
+MAX_INSTRUCTIONS = 1000
+
+
+def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume, instructions: str = ""):
     def generate_draft(state: State) -> dict:
         prompt = prompts.get_active(db, "generate_draft")
         profile = resume.parsed_profile or {}
@@ -67,6 +120,7 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             # A CV parsed before roles and projects were extracted has neither. Say so, rather than
             # asking the model to build half the email out of a list that isn't there.
             "has_history": "yes" if (profile.get("experience") or profile.get("projects")) else "",
+            "extra_instructions": instructions,
             "sender_name": profile.get("name") or "",
         })
         raw = llm.complete_json(
@@ -74,7 +128,7 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             name="generate_draft", metadata={"prompt_version": prompt.version, "prompt_id": str(prompt.id)},
         )
         subject = clean_subject(str(raw.get("subject") or ""))
-        body = str(raw.get("body") or "").strip()
+        body = unwrap_paragraphs(str(raw.get("body") or ""))
         if not subject or not body:
             raise llm.LLMError("generate_draft: the model returned an empty subject or body")
         return {"subject": subject[:MAX_SUBJECT], "body": body, "prompt_id": str(prompt.id)}
@@ -86,7 +140,12 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
     return graph.compile()
 
 
-def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False) -> Contact:
+def generate(
+    db: Session, contact_id: uuid.UUID, user: User, force: bool = False, instructions: str = ""
+) -> Contact:
+    """`instructions` is what the person typed when asking for a rewrite, e.g. "shorter, and mention
+    the internship". It is added to the prompt and overrides the default guidance where they clash."""
+    instructions = " ".join(instructions.split())[:MAX_INSTRUCTIONS]
     contact = db.get(Contact, contact_id, with_for_update=True)
     if contact is None:
         raise ActionError(404, "Contact not found")
@@ -95,6 +154,14 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     resume = db.get(Resume, contact.cv_used_id)
     if not resume.parsed_profile:
         raise ActionError(400, "The CV used for this contact hasn't been parsed. Run discovery on it first")
+    if instructions and "extra_instructions" not in prompts.get_active(db, "generate_draft").template:
+        # An edited prompt may not use the variable. Silently dropping the note would be worse than
+        # refusing: the dialog has just told them it will be followed.
+        raise ActionError(
+            400,
+            "The active generate_draft prompt doesn't use {{ extra_instructions }}, so a note can't "
+            "be applied. Add it in Settings > Prompts, or reset that node to the default.",
+        )
     db.commit()  # release the lock during the LLM call; the checks are repeated before saving
 
     client = telemetry.langfuse_client(db)
@@ -108,7 +175,7 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
         ) as root, telemetry.trace_attributes(
             trace_name="generate_draft", session_id=str(contact_id), tags=["contact", "draft"],
         ):
-            state = _build_graph(db, contact, startup, resume).invoke({})
+            state = _build_graph(db, contact, startup, resume, instructions).invoke({})
             root.update(output={"subject": state["subject"]})
     except EXPECTED_ERRORS as exc:
         db.rollback()
@@ -130,7 +197,9 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     contact.draft_approved_at = contact.draft_approved_by = None
     contact.draft_edited, contact.draft_eval = False, None
     contact.draft_trace_id = trace_id if client is not None else None
-    audit.record(db, user, "drafts.generate", "contact", contact.id, {"prompt_id": state["prompt_id"], "force": force})
+    audit.record(db, user, "drafts.generate", "contact", contact.id, {
+        "prompt_id": state["prompt_id"], "force": force, "instructions": instructions or None,
+    })
     db.commit()
     evals.submit_draft(contact.id)
     return contact

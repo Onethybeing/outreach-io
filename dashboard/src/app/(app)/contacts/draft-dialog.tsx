@@ -40,6 +40,7 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
   const emails = useApi<EmailEvent[]>(contactId ? `/contacts/${contactId}/emails` : null)
   const [edit, setEdit] = useState<{ subject: string; body: string } | null>(null)
   const [confirm, setConfirm] = useState<"send" | "rewrite" | null>(null)
+  const [instructions, setInstructions] = useState("")
   const [judgement, setJudgement] = useState<Record<string, unknown> | null>(null)
   const { run, isPending } = useAction()
 
@@ -55,6 +56,8 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
       contact.mutate(() => next)
       setEdit(null)
       setJudgement(null)
+      // Cleared too: a note left in the box would silently apply again on the next rewrite.
+      setInstructions("")
       onChanged()
     }
     return next
@@ -68,7 +71,13 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
   }
 
   const generate = async (force: boolean) =>
-    applied(await run("generate", () => post<Contact>(`/contacts/${contactId}/draft/generate${force ? "?force=true" : ""}`), "Draft written"))
+    applied(
+      await run(
+        "generate",
+        () => post<Contact>(`/contacts/${contactId}/draft/generate${force ? "?force=true" : ""}`, { instructions: instructions.trim() || null }),
+        "Draft written",
+      ),
+    )
 
   async function send() {
     const params = new URLSearchParams({ expected_mode: settings.app_mode })
@@ -127,6 +136,21 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
               <Textarea id="draft-body" value={body} readOnly={!editable} onChange={(e) => setEdit({ subject, body: e.target.value })} className="min-h-72 text-sm" />
             </div>
             {judgement && <Judgement value={judgement} />}
+
+            {can("drafts.act") && !alreadySent && (
+              <div className="space-y-1.5">
+                <Label htmlFor="draft-instructions">What should change? (optional)</Label>
+                <Textarea
+                  id="draft-instructions"
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  maxLength={1000}
+                  placeholder="Shorter. Lead with the healthcare internship, not the startup. Mention I can start immediately."
+                  className="min-h-16 text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Used by Rewrite below. Leave it blank for a plain rewrite.</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -153,7 +177,7 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
               {can("drafts.act") && (
                 <>
                   <Button variant="ghost" onClick={() => setConfirm("rewrite")} disabled={isPending("generate") || c.do_not_contact}>
-                    {spin("generate", <RotateCcwIcon />)} Rewrite
+                    {spin("generate", <RotateCcwIcon />)} Rewrite{instructions.trim() ? " with note" : ""}
                   </Button>
                   <Button variant="ghost" onClick={judge} disabled={isPending("judge") || dirty} title={dirty ? "Save your changes first" : "Score this draft with the LLM judge"}>
                     {spin("judge", <FlaskConicalIcon />)} Judge
@@ -185,7 +209,10 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
           open={confirm === "rewrite"}
           onOpenChange={(open) => !open && setConfirm(null)}
           title="Rewrite this draft?"
-          description={alreadySent ? "They've already been emailed. The new draft replaces this one." : "The new draft replaces this one, including any edits."}
+          description={
+            (alreadySent ? "They've already been emailed. The new draft replaces this one." : "The new draft replaces this one, including any edits.") +
+            (instructions.trim() ? ` Your note will be followed: "${instructions.trim()}"` : "")
+          }
           confirmLabel="Rewrite"
           onConfirm={() => generate(true)}
         />
