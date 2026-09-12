@@ -15,11 +15,13 @@ import { cn } from "@/lib/utils"
  * state, so the server and the first client render always agree.
  */
 export function ThemeToggle({ className }: { className?: string }) {
-  const { resolvedTheme, setTheme } = useTheme()
+  const { setTheme } = useTheme()
   const button = useRef<HTMLButtonElement>(null)
 
   function toggle() {
-    const next = resolvedTheme === "dark" ? "light" : "dark"
+    // Read the class rather than next-themes' resolvedTheme, which is still undefined on the first
+    // render: otherwise the very first click on an already-dark system would ask for dark again.
+    const next = document.documentElement.classList.contains("dark") ? "light" : "dark"
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     const start = (document as Document & { startViewTransition?: (cb: () => void) => ViewTransition })
       .startViewTransition

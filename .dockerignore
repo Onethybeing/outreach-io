@@ -11,4 +11,6 @@ storage/
 example_cv/
 tests/
 evals/
+docs/
+dashboard/
 *.log

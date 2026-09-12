@@ -325,13 +325,17 @@ Return only a JSON object: {"score": 0.0, "reason": "one sentence"}""",
     "eval_draft_quality": NodeContract(
         description="Eval judge: scores a cold email draft and lists claims the profile doesn't support.",
         required=("candidate_profile", "email_subject", "email_body", "startup_name", "contact_name"),
-        optional=("startup_description",),
+        optional=("startup_description", "startup_brief"),
         sample={
             "candidate_profile": SAMPLE_PROFILE,
             "email_subject": "RAG engineer for Acme",
             "email_body": "Hi Jane, I built RAG pipelines at a dev-tools startup. Resume attached. 15 minutes this week?",
             "startup_name": "Acme Vector",
             "startup_description": "Retrieval infrastructure for LLM apps.",
+            "startup_brief": (
+                '{"what_they_do": "Builds retrieval infrastructure that LLM apps use to search their own data.", '
+                '"stage": "Series A, $12M (2026)", "tech_signals": ["RAG", "vector search"]}'
+            ),
             "contact_name": "Jane Doe",
         },
         template="""You are grading a cold email a job candidate is about to send. Be strict.
@@ -341,6 +345,9 @@ Candidate profile (JSON), the only allowed source of facts about the candidate:
 
 Recipient: {{ contact_name }} at {{ startup_name }}
 {% if startup_description %}What {{ startup_name }} does: {{ startup_description }}
+{% endif %}{% if startup_brief %}
+Researched notes on {{ startup_name }} (JSON), the only allowed source of facts about the company:
+{{ startup_brief }}
 {% endif %}
 Subject: {{ email_subject }}
 Body:
@@ -353,8 +360,10 @@ Grade:
 - clarity (1-5): easy to read, one clear ask
 - tone (1-5): professional, confident, not pushy or flattering
 - length_ok: true if the body is roughly 60-160 words
-- unsupported_claims: every statement about the candidate that the profile does not support,
-  including separate facts merged into one claim. Empty list if none.
+- unsupported_claims: every statement the sources above do not support, whether it is about the
+  candidate (check the profile) or about the company (check the notes, and treat any funding,
+  headcount, customer or product detail that is absent from them as unsupported), including
+  separate facts merged into one claim. Empty list if none.
 - score (0-1): overall readiness to send; any unsupported claim caps it at 0.4
 
 Return only a JSON object:

@@ -278,16 +278,22 @@ def discover_startups(ctx: RunContext, state: State) -> NodeResult:
 def research_startups(ctx: RunContext, state: State) -> NodeResult:
     """One search and one summary per startup, so drafts can name something real about the company.
 
-    Best effort: a company we learn nothing about still gets contacted, just with a thinner email.
+    Runs after find_kdms and only for startups that actually produced someone to contact: research
+    for a company with nobody to write to would never be read. Best effort per company, since a
+    thin email still beats failing the run.
     """
+    with_candidates = set(ctx.db.scalars(
+        select(Candidate.startup_id).where(Candidate.run_id == ctx.run.id).distinct()
+    ))
+    startups = [s for s in (ctx.db.get(Startup, uuid.UUID(i)) for i in state["startup_ids"]) if s.id in with_candidates]
     researched, failed = 0, 0
-    for startup_id in state["startup_ids"]:
-        startup = ctx.db.get(Startup, uuid.UUID(startup_id))
+    for startup in startups:
         query = RESEARCH_QUERY.format(name=startup.name.replace('"', ""), domain=startup.domain or "")
         try:
             results = tavily.search(ctx.db, query.strip(), RESEARCH_RESULTS, content_chars=RESEARCH_CONTENT_CHARS)
             if not results:
-                ctx.emit("research_startup", "warning", f"Nothing found about {startup.name}")
+                startup.researched_at = _now()  # attempted, nothing to find
+                ctx.emit("research_startups", "warning", f"Nothing found about {startup.name}")
                 continue
             brief = ctx.llm_json("research_startup", {
                 "startup_name": startup.name,
@@ -295,13 +301,15 @@ def research_startups(ctx: RunContext, state: State) -> NodeResult:
                 "candidate_profile": json.dumps(state["profile"]),
                 "search_results": json.dumps(results),
             })
-        except EXPECTED_ERRORS as exc:
-            # One company's research failing must not cost the whole run.
+            # Inside the try: the model's output is unvalidated, and a bad shape must cost one
+            # company's brief, never the whole run.
+            startup.brief = _clean_brief(brief, {r["url"] for r in results})
+        except (*EXPECTED_ERRORS, TypeError, ValueError) as exc:
             failed += 1
-            ctx.emit("research_startup", "warning", f"Could not research {startup.name}: {exc}")
+            startup.researched_at = _now()  # attempted and failed, so a retry can tell it apart
+            ctx.emit("research_startups", "warning", f"Could not research {startup.name}: {exc}")
             continue
 
-        startup.brief = _clean_brief(brief, {r["url"] for r in results})
         startup.researched_at = _now()
         if startup.brief:
             researched += 1
@@ -310,7 +318,7 @@ def research_startups(ctx: RunContext, state: State) -> NodeResult:
     ctx.db.flush()
 
     note = f", {failed} could not be researched" if failed else ""
-    return {}, f"Researched {researched} of {len(state['startup_ids'])} startups{note}", {"researched": researched}
+    return {}, f"Researched {researched} of {len(startups)} startups with candidates{note}", {"researched": researched}
 
 
 def _clean_brief(raw: Any, seen_urls: set[str]) -> dict | None:
@@ -318,13 +326,18 @@ def _clean_brief(raw: Any, seen_urls: set[str]) -> dict | None:
     if not isinstance(raw, dict):
         return None
 
+    # bool is a subclass of int: without excluding it, a model answering `true` for "stage" would
+    # store the string "True" and the draft would repeat it as a fact about the company.
+    def scalar(value: Any) -> bool:
+        return isinstance(value, (str, int, float)) and not isinstance(value, bool)
+
     def text(key: str) -> str | None:
         value = raw.get(key)
-        return str(value).strip()[:500] or None if isinstance(value, (str, int, float)) else None
+        return str(value).strip()[:500] or None if scalar(value) else None
 
     def items(key: str, limit: int) -> list[str]:
         value = raw.get(key)
-        return [str(v).strip()[:200] for v in value[:limit] if isinstance(v, (str, int, float)) and str(v).strip()] if isinstance(value, list) else []
+        return [str(v).strip()[:200] for v in value[:limit] if scalar(v) and str(v).strip()] if isinstance(value, list) else []
 
     news = []
     for item in (raw.get("recent_news") or [])[:3] if isinstance(raw.get("recent_news"), list) else []:
@@ -333,8 +346,9 @@ def _clean_brief(raw: Any, seen_urls: set[str]) -> dict | None:
         fact = str(item.get("fact") or "").strip()[:300]
         url = item.get("url")
         if fact:
-            # Never keep a citation the model made up: only URLs the search returned.
-            news.append({"fact": fact, "url": url if url in seen_urls else None})
+            # Never keep a citation the model made up: only URLs the search returned. The isinstance
+            # check matters because a non-string (a list, say) would make `in` raise on a set.
+            news.append({"fact": fact, "url": url if isinstance(url, str) and url in seen_urls else None})
 
     brief = {
         "what_they_do": text("what_they_do"),
@@ -445,8 +459,8 @@ STEPS: tuple[tuple[str, str, Callable[[RunContext, State], NodeResult]], ...] = 
     ("parse_resume", "Understanding the candidate's profile", parse_resume),
     ("build_search_queries", "Writing search queries", build_search_queries),
     ("discover_startups", "Searching for matching startups", discover_startups),
-    ("research_startups", "Reading up on each startup", research_startups),
     ("find_kdms", "Finding decision-makers on LinkedIn", find_kdms),
+    ("research_startups", "Reading up on each startup", research_startups),
     ("dedupe_against_db", "Checking for people already in contacts", dedupe_against_db),
 )
 
@@ -479,9 +493,10 @@ def build_graph(ctx: RunContext):
     graph.add_edge("ingest_resume", "parse_resume")
     graph.add_edge("parse_resume", "build_search_queries")
     graph.add_edge("build_search_queries", "discover_startups")
-    graph.add_conditional_edges("discover_startups", lambda s: END if s.get("stop") else "research_startups")
-    graph.add_edge("research_startups", "find_kdms")
-    graph.add_conditional_edges("find_kdms", lambda s: END if s.get("stop") else "dedupe_against_db")
+    graph.add_conditional_edges("discover_startups", lambda s: END if s.get("stop") else "find_kdms")
+    # Research runs only once there is someone to write to, so a run that finds nobody spends nothing on it.
+    graph.add_conditional_edges("find_kdms", lambda s: END if s.get("stop") else "research_startups")
+    graph.add_edge("research_startups", "dedupe_against_db")
     graph.add_edge("dedupe_against_db", END)
     return graph.compile()
 

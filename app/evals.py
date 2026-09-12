@@ -76,6 +76,9 @@ def judge_draft(db: Session, contact_id: uuid.UUID) -> dict | None:
         "candidate_profile": json.dumps(resume.parsed_profile or {}),
         "email_subject": contact.draft_subject or "", "email_body": contact.draft_text,
         "startup_name": startup.name, "startup_description": startup.description or "", "contact_name": contact.name,
+        # The judge needs the same company facts the draft was written from, or it can't tell an
+        # invented funding round from a real one.
+        "startup_brief": json.dumps(startup.brief) if startup.brief else "",
     })
     graded = (contact.draft_subject, contact.draft_text)  # captured before the slow call
     client = telemetry.langfuse_client(db)
