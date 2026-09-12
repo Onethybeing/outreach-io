@@ -18,8 +18,14 @@ import type { Rate, Resume, Stats } from "@/lib/types"
 import { useAction } from "@/lib/use-action"
 import { useApi } from "@/lib/use-api"
 
+/** The name they'd recognise: their own first name, or the part of the email before the @. */
+function firstName(me: { name: string | null; email: string }): string {
+  const fromName = me.name?.trim().split(/\s+/)[0]
+  return fromName || me.email.split("@")[0]
+}
+
 export default function StatsPage() {
-  const { settings } = useSession()
+  const { settings, me } = useSession()
   const [days, setDays] = useState("30")
   const [resumeId, setResumeId] = useState("all")
   // In dev mode every "send" is a dev send, so hiding them would show all zeros.
@@ -41,7 +47,7 @@ export default function StatsPage() {
   return (
     <>
       <PageHeader
-        title="Stats"
+        title={`Hi ${firstName(me)}`}
         description="How the pipeline is doing. Every rate shows its sample size, so don't read much into small n."
         actions={
           <>

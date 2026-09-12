@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from app import httpclient
+
 TIMEOUT = 20
 
 
@@ -17,7 +19,7 @@ class ProviderSpec:
 
 
 def _bearer_get(url: str, token: str) -> httpx.Response:
-    return httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
+    return httpclient.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
 
 
 def _result(response: httpx.Response, ok_message: str) -> tuple[bool, str]:
@@ -43,7 +45,7 @@ def _test_brightdata(c: dict) -> tuple[bool, str]:
 
 
 def _test_apollo(c: dict) -> tuple[bool, str]:
-    r = httpx.get(
+    r = httpclient.get(
         "https://api.apollo.io/v1/auth/health",
         headers={"X-Api-Key": c["api_key"], "Cache-Control": "no-cache"},
         timeout=TIMEOUT,
@@ -56,7 +58,7 @@ def _test_apollo(c: dict) -> tuple[bool, str]:
 
 def _test_langfuse(c: dict) -> tuple[bool, str]:
     basic = base64.b64encode(f"{c['public_key']}:{c['secret_key']}".encode()).decode()
-    r = httpx.get(
+    r = httpclient.get(
         f"{c['host'].rstrip('/')}/api/public/projects",
         headers={"Authorization": f"Basic {basic}"},
         timeout=TIMEOUT,
@@ -68,7 +70,7 @@ def _test_langfuse(c: dict) -> tuple[bool, str]:
 
 
 def _test_gmail(c: dict) -> tuple[bool, str]:
-    token = httpx.post(
+    token = httpclient.post(
         "https://oauth2.googleapis.com/token",
         data={
             "client_id": c["client_id"],

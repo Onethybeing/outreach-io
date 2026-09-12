@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import bootstrap
+from app import bootstrap, httpclient
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.prompts import PromptError
@@ -30,6 +30,7 @@ def _bootstrap() -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await run_in_threadpool(_bootstrap)
     yield
+    httpclient.close()  # let the shared connection pool go with the process
 
 
 app = FastAPI(title="outreach-io", lifespan=lifespan)

@@ -52,6 +52,39 @@ class RunFailed(Exception):
         self.node = node
 
 
+EXPERIENCE_KINDS = ("job", "internship", "freelance", "founder", "research", "volunteer", "project")
+MAX_EXPERIENCE = 8
+MAX_PROJECTS = 6
+
+
+def _dicts(value: Any, limit: int) -> list:
+    return [v for v in value[:limit] if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+class ExperienceItem(BaseModel):
+    """One role or project the draft can pick from, so an internship can lead if it fits best."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    organisation: str | None = None
+    kind: str | None = None  # one of EXPERIENCE_KINDS
+    period: str | None = None
+    what: str | None = None  # what they built or did, in their own resume's words
+    tech: list[str] = []
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> str | None:
+        text = str(value or "").strip().lower()
+        return text if text in EXPERIENCE_KINDS else None
+
+    @field_validator("tech", mode="before")
+    @classmethod
+    def _tech_list(cls, value: Any) -> list[str]:
+        return [str(v).strip()[:60] for v in value[:10] if v and str(v).strip()] if isinstance(value, list) else []
+
+
 class CandidateProfile(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -62,11 +95,25 @@ class CandidateProfile(BaseModel):
     skills: list[str] = []
     domains: list[str] = []
     target_titles: list[str] = []
+    # Every role and project, not just the headline one: the draft picks whichever is closest to
+    # what the startup actually does.
+    experience: list[ExperienceItem] = []
+    projects: list[ExperienceItem] = []
 
     @field_validator("skills", "domains", "target_titles", mode="before")
     @classmethod
     def _string_list(cls, value: Any) -> list[str]:
         return [str(v).strip() for v in value if v and str(v).strip()] if isinstance(value, list) else []
+
+    @field_validator("experience", mode="before")
+    @classmethod
+    def _experience_list(cls, value: Any) -> list:
+        return _dicts(value, MAX_EXPERIENCE)
+
+    @field_validator("projects", mode="before")
+    @classmethod
+    def _projects_list(cls, value: Any) -> list:
+        return _dicts(value, MAX_PROJECTS)
 
     @field_validator("years_experience", mode="before")
     @classmethod
@@ -205,8 +252,18 @@ def _previous_startups(ctx: RunContext) -> list[Startup]:
 
 def discover_startups(ctx: RunContext, state: State) -> NodeResult:
     results, seen_urls = [], set()
-    for query in state["queries"]:
-        for result in tavily.search(ctx.db, query, RESULTS_PER_QUERY):
+    # The queries are independent, so they run together: this is most of a run's search time.
+    batches = tavily.search_many(ctx.db, state["queries"], RESULTS_PER_QUERY)
+    failures = [b for b in batches if isinstance(b, tavily.SearchError)]
+    if failures and len(failures) == len(batches):
+        # Every query failing is a bad key or an exhausted quota, not "nothing matched". Say so,
+        # instead of reporting an empty search as if the candidate had no options.
+        raise RunFailed(f"Search is not working: {failures[0]}", "discover_startups")
+    for batch in batches:
+        if isinstance(batch, tavily.SearchError):
+            ctx.emit("discover_startups", "warning", f"A search failed: {batch}")
+            continue
+        for result in batch:
             if result["url"] not in seen_urls:
                 seen_urls.add(result["url"])
                 results.append(result)
@@ -286,11 +343,16 @@ def research_startups(ctx: RunContext, state: State) -> NodeResult:
         select(Candidate.startup_id).where(Candidate.run_id == ctx.run.id).distinct()
     ))
     startups = [s for s in (ctx.db.get(Startup, uuid.UUID(i)) for i in state["startup_ids"]) if s.id in with_candidates]
+    searches = tavily.search_many(
+        ctx.db,
+        [RESEARCH_QUERY.format(name=s.name.replace('"', ""), domain=s.domain or "").strip() for s in startups],
+        RESEARCH_RESULTS, content_chars=RESEARCH_CONTENT_CHARS,
+    )
     researched, failed = 0, 0
-    for startup in startups:
-        query = RESEARCH_QUERY.format(name=startup.name.replace('"', ""), domain=startup.domain or "")
+    for startup, results in zip(startups, searches):
         try:
-            results = tavily.search(ctx.db, query.strip(), RESEARCH_RESULTS, content_chars=RESEARCH_CONTENT_CHARS)
+            if isinstance(results, tavily.SearchError):
+                raise results
             if not results:
                 startup.researched_at = _now()  # attempted, nothing to find
                 ctx.emit("research_startups", "warning", f"Nothing found about {startup.name}")
@@ -368,12 +430,20 @@ def find_kdms(ctx: RunContext, state: State) -> NodeResult:
     target_role = (profile.get("target_titles") or [profile.get("current_role") or "engineer"])[0]
     seen: set[str] = set()
     total = 0
-    for startup_id in state["startup_ids"]:
-        startup = ctx.db.get(Startup, uuid.UUID(startup_id))
-        results = tavily.search(
-            ctx.db, KDM_QUERY.format(name=startup.name.replace('"', "")), KDM_SEARCH_RESULTS,
-            include_domains=["linkedin.com/in"], content_chars=200,
-        )
+    startups = [ctx.db.get(Startup, uuid.UUID(i)) for i in state["startup_ids"]]
+    # All the profile searches first, together; the model calls stay serial because Groq's
+    # tokens-per-minute limit would just turn parallel calls into 429s.
+    searches = tavily.search_many(
+        ctx.db, [KDM_QUERY.format(name=s.name.replace('"', "")) for s in startups],
+        KDM_SEARCH_RESULTS, include_domains=["linkedin.com/in"], content_chars=200,
+    )
+    failures = [s for s in searches if isinstance(s, tavily.SearchError)]
+    if failures and len(failures) == len(searches):
+        raise RunFailed(f"Search is not working: {failures[0]}", "find_kdms")
+    for startup, results in zip(startups, searches):
+        if isinstance(results, tavily.SearchError):
+            ctx.emit("find_kdms", "warning", f"Profile search failed for {startup.name}: {results}")
+            continue
         found_urls = {u for u in (linkedin_profile_url(r["url"]) for r in results) if u}
         if not found_urls:
             ctx.emit("find_kdms", "warning", f"No LinkedIn profiles found for {startup.name}")

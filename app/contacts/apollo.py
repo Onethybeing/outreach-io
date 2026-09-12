@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.orm import Session
 
-from app import telemetry, vault
+from app import httpclient, telemetry, vault
 from app.discovery.normalize import linkedin_profile_url, names_match, website_domain
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def enrich_org(db: Session, website: str | None, name: str | None = None) -> Org
     try:
         with telemetry.observation("apollo_org_enrich", as_type="tool", input=params) as obs:
             telemetry.heartbeat()
-            response = httpx.get(f"{BASE}/organizations/enrich", headers=_headers(db), params=params, timeout=30)
+            response = httpclient.get(f"{BASE}/organizations/enrich", headers=_headers(db), params=params, timeout=30)
             obs.update(output={"status": response.status_code})
             if response.status_code in (404, 422):
                 return OrgLookup(None, definitive=True)
@@ -91,7 +91,7 @@ def find_email(db: Session, name: str, linkedin_url: str, website: str | None) -
             raise ProviderUnavailable(f"Apollo is not configured. Add its key in Settings > Vault ({exc})")
         try:
             telemetry.heartbeat()
-            response = httpx.post(f"{BASE}/people/match", headers=headers, json=body, timeout=30)
+            response = httpclient.post(f"{BASE}/people/match", headers=headers, json=body, timeout=30)
         except httpx.HTTPError as exc:
             raise EmailLookupError(f"Could not reach Apollo: {type(exc).__name__}")
 
@@ -142,7 +142,7 @@ def _clean_person_name(name: str) -> str:
 def _search_saved_contacts(headers: dict, query: str, page: int) -> tuple[list[dict], int]:
     try:
         telemetry.heartbeat()
-        response = httpx.post(f"{BASE}/contacts/search", headers=headers, timeout=30,
+        response = httpclient.post(f"{BASE}/contacts/search", headers=headers, timeout=30,
                               json={"q_keywords": query, "per_page": SAVED_SEARCH_PER_PAGE, "page": page})
     except httpx.HTTPError as exc:
         raise EmailLookupError(f"Could not reach Apollo: {type(exc).__name__}")

@@ -64,6 +64,9 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             # What discovery learned about the company, so the email can name something real.
             "startup_brief": json.dumps(startup.brief) if startup.brief else "",
             "contact_reason": contact.outreach_reason or "",
+            # A CV parsed before roles and projects were extracted has neither. Say so, rather than
+            # asking the model to build half the email out of a list that isn't there.
+            "has_history": "yes" if (profile.get("experience") or profile.get("projects")) else "",
             "sender_name": profile.get("name") or "",
         })
         raw = llm.complete_json(

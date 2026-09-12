@@ -277,7 +277,7 @@ def test_email_lookup_needs_verification_unless_forced(db, world, operator):
     world["state"]["profile"] = Profile("x", "Other Corp", "other-corp", None, None)
     contact_id = _verified_contact(operator, world)  # → mismatch
     blocked = operator.post(f"/contacts/{contact_id}/email/lookup")
-    assert blocked.status_code == 400 and "verify" in blocked.json()["detail"]
+    assert blocked.status_code == 400 and "verify" in blocked.json()["detail"].lower()
 
 
 def test_provider_unavailable_is_clear_and_marks_failed(db, world, operator):
@@ -501,7 +501,7 @@ def test_apollo_find_email_parsing(db, monkeypatch):
         "nobody": httpx.Response(200, json={"person": None}),
     }
     current = {}
-    monkeypatch.setattr(apollo.httpx, "post", lambda *a, **k: responses[current["case"]])
+    monkeypatch.setattr(apollo.httpclient, "post", lambda *a, **k: responses[current["case"]])
 
     current["case"] = "plan"
     with pytest.raises(apollo.ProviderUnavailable, match="plan"):
@@ -518,7 +518,7 @@ def _saved_contacts(monkeypatch, contacts):
     from app import vault
 
     monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
-    monkeypatch.setattr(apollo.httpx, "post", lambda *a, **k: httpx.Response(200, json={"contacts": contacts}))
+    monkeypatch.setattr(apollo.httpclient, "post", lambda *a, **k: httpx.Response(200, json={"contacts": contacts}))
 
 
 def test_saved_contacts_match_by_linkedin_profile(db, monkeypatch):
@@ -558,7 +558,7 @@ def test_saved_contact_found_via_domain_query_despite_different_name(db, monkeyp
         found = [jane] if json["q_keywords"] == "acme.example" else []
         return httpx.Response(200, json={"contacts": found, "pagination": {"total_pages": 1}})
 
-    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    monkeypatch.setattr(apollo.httpclient, "post", fake_post)
     result = apollo.find_email_in_saved_contacts(db, "Dr. Jane Doe, PhD", "https://uk.linkedin.com/in/Jane-Doe", "https://www.acme.example")
     assert result.found and result.email == "jane@acme.example"
     assert queries == [("jane doe", 1), ("acme.example", 1)]
@@ -582,7 +582,7 @@ def test_profile_match_skips_the_remaining_searches(db, monkeypatch):
         jane = {"id": "a", "name": "Jane Doe", "linkedin_url": "https://www.linkedin.com/in/jane", "email": "jane@acme.example"}
         return httpx.Response(200, json={"contacts": [jane], "pagination": {"total_pages": 3}})
 
-    monkeypatch.setattr(apollo.httpx, "post", fake_post)
+    monkeypatch.setattr(apollo.httpclient, "post", fake_post)
     assert apollo.find_email_in_saved_contacts(db, "Jane Doe", "https://www.linkedin.com/in/jane", "acme.example").found
     assert calls == ["jane doe"]  # no further pages and no domain query
 
@@ -632,7 +632,7 @@ def test_apollo_enrich_by_name_only_trusts_matching_company(db, monkeypatch):
             return httpx.Response(status["code"], json={})
         return httpx.Response(200, json={"organization": {"name": "Powerful Medical", "linkedin_url": "http://www.linkedin.com/company/powerful-medical", "website_url": "http://www.powerfulmedical.com"}})
 
-    monkeypatch.setattr(apollo.httpx, "get", fake_get)
+    monkeypatch.setattr(apollo.httpclient, "get", fake_get)
     assert apollo.enrich_org(db, "https://powerfulmedical.com/x", "ignored").org["name"] == "Powerful Medical"
     assert apollo.enrich_org(db, None, "Powerful Medical").org["website_url"] == "http://www.powerfulmedical.com"
     lookalike = apollo.enrich_org(db, None, "Powerful Medicine Labs")  # same-name lookalike not trusted
@@ -652,7 +652,7 @@ def test_brightdata_scrape_trigger_poll_download(db, monkeypatch):
     monkeypatch.setattr(vault, "get_credential", lambda db_, p: {"api_key": "k"})
     monkeypatch.setattr(brightdata.time, "sleep", lambda s: None)
     progress = iter(["running", "running", "ready"])
-    monkeypatch.setattr(brightdata.httpx, "post", lambda *a, **k: httpx.Response(200, json={"snapshot_id": "sd_1"}))
+    monkeypatch.setattr(brightdata.httpclient, "post", lambda *a, **k: httpx.Response(200, json={"snapshot_id": "sd_1"}))
 
     def fake_get(url, **kwargs):
         if "/progress/" in url:
@@ -663,10 +663,10 @@ def test_brightdata_scrape_trigger_poll_download(db, monkeypatch):
                                 "link": "https://www.linkedin.com/company/powerful-medical?trk=x"},
         }])
 
-    monkeypatch.setattr(brightdata.httpx, "get", fake_get)
+    monkeypatch.setattr(brightdata.httpclient, "get", fake_get)
     profile = brightdata.scrape_profile(db, "https://www.linkedin.com/in/simon")
     assert (profile.current_company, profile.current_company_slug) == ("Powerful Medical", "powerful-medical")
 
-    monkeypatch.setattr(brightdata.httpx, "post", lambda *a, **k: httpx.Response(401))
+    monkeypatch.setattr(brightdata.httpclient, "post", lambda *a, **k: httpx.Response(401))
     with pytest.raises(brightdata.ProfileError, match="API key"):
         brightdata.scrape_profile(db, "https://www.linkedin.com/in/simon")

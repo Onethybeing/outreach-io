@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-from app import telemetry, vault
+from app import httpclient, telemetry, vault
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_RATE_LIMIT_RETRIES = 5
@@ -77,7 +77,7 @@ def complete(
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
             telemetry.heartbeat()
             try:
-                response = httpx.post(
+                response = httpclient.post(
                     GROQ_CHAT_URL, headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=120
                 )
             except httpx.HTTPError as exc:

@@ -11,7 +11,7 @@ from email.utils import parseaddr
 import httpx
 from sqlalchemy.orm import Session
 
-from app import telemetry, vault
+from app import httpclient, telemetry, vault
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -50,7 +50,7 @@ def _access_token(db: Session, force_refresh: bool = False) -> str:
     key = (creds["client_id"], creds["refresh_token"])
     if not force_refresh and _token and _token[0] == key and _token[2] > time.monotonic() + 60:
         return _token[1]
-    response = httpx.post(TOKEN_URL, data={
+    response = httpclient.post(TOKEN_URL, data={
         "client_id": creds["client_id"], "client_secret": creds["client_secret"],
         "refresh_token": creds["refresh_token"], "grant_type": "refresh_token",
     }, timeout=30)
@@ -65,7 +65,7 @@ def _get(db: Session, path: str, params: dict) -> dict:
     for attempt in range(2):
         telemetry.heartbeat()
         try:
-            response = httpx.get(f"{API}{path}", headers={"Authorization": f"Bearer {_access_token(db, force_refresh=attempt > 0)}"},
+            response = httpclient.get(f"{API}{path}", headers={"Authorization": f"Bearer {_access_token(db, force_refresh=attempt > 0)}"},
                                  params=params, timeout=30)
         except httpx.HTTPError as exc:
             raise GmailError(f"Could not reach Gmail: {type(exc).__name__}")
@@ -151,7 +151,7 @@ def send_message(db: Session, raw_message: bytes) -> tuple[str, str]:
     for attempt in range(2):
         telemetry.heartbeat()
         try:
-            response = httpx.post(
+            response = httpclient.post(
                 f"{API}/messages/send",
                 headers={"Authorization": f"Bearer {_access_token(db, force_refresh=attempt > 0)}"},
                 json=payload, timeout=60,
