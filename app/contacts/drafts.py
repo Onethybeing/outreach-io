@@ -32,32 +32,53 @@ def clean_subject(subject: str) -> str:
     return " ".join(subject.split())
 
 
-# A line that was wrapped mid-sentence: it doesn't end a sentence, and the next line continues it in
-# lower case. "Best regards," followed by a name is not this, because the name is capitalised.
-_CONTINUES = re.compile(r"[^.!?:;)\"']\s*$")
+_BULLET = re.compile(r"^\s*(?:[-*•·]|\d+[.)])\s+")
+_CLOSING = re.compile(r"^(best|regards|kind regards|best regards|thanks|thank you|sincerely|cheers|"
+                      r"warmly|yours|all the best|many thanks)\b", re.I)
+SIGNATURE_LINE = 40  # a name or sign-off is short; a wrapped sentence usually isn't
+
+
+def _is_signature(block: list[str]) -> bool:
+    """The closing block: a sign-off and a name.
+
+    Requiring the opening word to read as a sign-off (or at least to end in a comma, as almost all
+    of them do) keeps a short final paragraph from being mistaken for one and left broken.
+    """
+    if len(block) > 4 or any(len(line) > SIGNATURE_LINE for line in block):
+        return False
+    # A closing is a couple of words ("Best regards,"). The word limit keeps a short sentence that
+    # happens to end a line on a comma ("Is there a role open,") from looking like one.
+    return bool(_CLOSING.match(block[0])) or (block[0].endswith(",") and len(block[0].split()) <= 3)
 
 
 def unwrap_paragraphs(body: str) -> str:
-    """Undo hard wrapping inside a sentence, keeping real line breaks.
+    """Undo hard wrapping inside a paragraph, keeping the breaks that were meant.
 
-    Models often wrap the body at some width of their own. In an email that shows up as a sentence
-    broken across two lines, because the reader's client wraps it again at a different width.
-    Blank lines (paragraphs) and deliberate breaks like a sign-off are left alone.
+    Models wrap the body at a width of their own choosing. The reader's client then wraps it again
+    at a different width, and the result is sentences broken in the middle. Working a paragraph at a
+    time rather than guessing line by line: prose is joined into one line and left to the client,
+    while blank-line gaps, bullet lists and the closing sign-off keep their breaks.
     """
-    out: list[str] = []
+    blocks: list[list[str]] = []
+    current: list[str] = []
     for line in body.splitlines():
         stripped = line.strip()
-        if (
-            out
-            and stripped
-            and out[-1].strip()
-            and _CONTINUES.search(out[-1])
-            and stripped[:1].islower()
-        ):
-            out[-1] = f"{out[-1].rstrip()} {stripped}"
+        if stripped:
+            current.append(stripped)
+        elif current:
+            blocks.append(current)
+            current = []
+    if current:
+        blocks.append(current)
+
+    out: list[str] = []
+    for index, block in enumerate(blocks):
+        last = index == len(blocks) - 1
+        if any(_BULLET.match(line) for line in block) or (last and _is_signature(block)):
+            out.append("\n".join(block))
         else:
-            out.append(stripped)
-    return "\n".join(out).strip()
+            out.append(" ".join(block))
+    return "\n\n".join(out).strip()
 
 
 def _check_can_draft(contact: Contact, force: bool) -> None:
@@ -133,6 +154,14 @@ def generate(
     resume = db.get(Resume, contact.cv_used_id)
     if not resume.parsed_profile:
         raise ActionError(400, "The CV used for this contact hasn't been parsed. Run discovery on it first")
+    if instructions and "extra_instructions" not in prompts.get_active(db, "generate_draft").template:
+        # An edited prompt may not use the variable. Silently dropping the note would be worse than
+        # refusing: the dialog has just told them it will be followed.
+        raise ActionError(
+            400,
+            "The active generate_draft prompt doesn't use {{ extra_instructions }}, so a note can't "
+            "be applied. Add it in Settings > Prompts, or reset that node to the default.",
+        )
     db.commit()  # release the lock during the LLM call; the checks are repeated before saving
 
     client = telemetry.langfuse_client(db)

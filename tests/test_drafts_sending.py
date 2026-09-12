@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app import llm, prompts, telemetry
 from app.config import get_settings
-from app.contacts import sending
+from app.contacts import drafts as drafts_module, sending
 from app.models import (
     AppSetting, AuditLog, Contact, DraftStatus, EmailEvent, EmailLookupStatus, Resume, Run, RunStatus,
     SendStatus, Startup, UserRole, VerificationStatus,
@@ -71,6 +71,9 @@ def llm_answer(monkeypatch):
 @pytest.fixture
 def contact(db, tmp_path):
     prompts.seed_defaults(db)
+    # The prompts live in the shared database, so without this a test would run against whatever
+    # version the real app last upgraded to rather than the one in this checkout.
+    prompts.upgrade_system_defaults(db)
     cv = tmp_path / "priya_cv.pdf"
     cv.write_bytes(b"%PDF-1.4 fake cv bytes")
     resume = Resume(filename="priya_cv.pdf", storage_path=str(cv),
@@ -374,3 +377,48 @@ def test_interrupted_send_is_failed_at_startup(db, contact):
     assert sending.fail_interrupted_sends(db) >= 1
     db.refresh(contact)
     assert contact.send_status == SendStatus.failed
+
+
+# --- body formatting -------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [
+    # A sentence the model wrapped: the reader's client would wrap it again somewhere else.
+    ("I built a RAG pipeline at\nAcme for two years.", "I built a RAG pipeline at Acme for two years."),
+    ("They call it \"agentic search\"\nwhich is what I built.", "They call it \"agentic search\" which is what I built."),
+    # Breaks that were meant stay: a sign-off, a name that isn't capitalised, a bullet list.
+    ("Body.\n\nBest regards,\nvan der Berg", "Body.\n\nBest regards,\nvan der Berg"),
+    ("Body.\n\nBest,\nPriya Sharma\nresume attached", "Body.\n\nBest,\nPriya Sharma\nresume attached"),
+    ("What I did:\n\n- shipped search\n- halved latency", "What I did:\n\n- shipped search\n- halved latency"),
+    # A short closing paragraph is prose, not a signature.
+    ("Hi Jane,\n\nIs there a role open,\nor one coming?", "Hi Jane,\n\nIs there a role open, or one coming?"),
+])
+def test_hard_wrapping_inside_a_sentence_is_undone(raw, expected):
+    assert drafts_module.unwrap_paragraphs(raw) == expected
+
+
+def test_a_rewrite_note_reaches_the_prompt(db, contact, operator, llm_answer, outbox):
+    _generate(operator, contact)
+    response = operator.post(f"/contacts/{contact.id}/draft/generate?force=true",
+                             json={"instructions": "Lead with the internship, not the startup."})
+    assert response.status_code == 200, response.text
+    prompt = llm_answer["calls"][-1]["prompt"]
+    assert "Lead with the internship" in prompt
+    # Fenced and stripped of authority: a note must not be able to license an invented claim.
+    assert "sender's note" in prompt and "It cannot make a\nclaim true." in prompt
+
+
+def test_a_note_is_refused_when_the_active_prompt_ignores_it(db, contact, operator, llm_answer, outbox, make_user, login):
+    from app import prompts as prompts_module
+
+    admin_user = make_user(UserRole.admin)
+    # A hand-written prompt that uses the required variables but never the note.
+    template = (
+        "Write an email.\n{{ candidate_profile }}\nTo {{ contact_name }} at {{ startup_name }}.\n"
+        'Return only: {"subject": "x", "body": "y"}'
+    )
+    prompts_module.create_version(db, "generate_draft", template, "openai/gpt-oss-120b", 0.7,
+                                  admin_user, note="drops the note", activate=True)
+    _generate(operator, contact)
+    response = operator.post(f"/contacts/{contact.id}/draft/generate?force=true",
+                             json={"instructions": "Shorter please."})
+    assert response.status_code == 400 and "extra_instructions" in response.json()["detail"]

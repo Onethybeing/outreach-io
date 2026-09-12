@@ -34,6 +34,9 @@ class EmailResult:
     # A free, later-fixable miss (e.g. "not saved in Apollo yet"): recorded as failed so it can be
     # retried, instead of not_found which blocks re-lookup and counts as a paid miss.
     retryable: bool = False
+    # Why it missed, for callers that need to tell the cases apart rather than read the note:
+    # "not_saved" (not in saved contacts at all) or "not_revealed" (saved, email still hidden).
+    code: str | None = None
 
 
 def _headers(db: Session) -> dict:
@@ -222,11 +225,11 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
         match = None
     if match is None:
         return EmailResult(False, None, "Not in your saved Apollo contacts yet. Reveal the email on apollo.io, "
-                                        "save the person, then look up again", retryable=True)
+                                        "save the person, then look up again", retryable=True, code="not_saved")
     email = _usable_email(match.get("email"))
     if not email:
         return EmailResult(False, None, "Saved in Apollo, but the email isn't revealed yet. Reveal it on apollo.io, "
-                                        "then look up again", retryable=True)
+                                        "then look up again", retryable=True, code="not_revealed")
     telemetry.count("apollo_saved_contact_hits")
     return EmailResult(True, email, f"Found in saved Apollo contacts (status: {match.get('email_status') or 'unknown'})")
 
@@ -240,17 +243,19 @@ def find_email_saved_then_fresh(db: Session, name: str, linkedin_url: str, websi
     saved = find_email_in_saved_contacts(db, name, linkedin_url, website)
     if saved.found:
         return saved
+    if saved.code == "not_revealed":
+        # They are saved and the operator is mid-way through revealing the email by hand. Spending a
+        # paid lookup on someone already being handled for free would be the wrong call.
+        return saved
 
     try:
         fresh = find_email(db, name, linkedin_url, website)
     except ProviderUnavailable as exc:
-        # Retryable: nothing was spent, and saving the person on apollo.io makes the first step work.
-        return EmailResult(
-            False, None,
-            f"Not in your saved Apollo contacts, and the fresh lookup is unavailable: {exc}",
-            retryable=True,
-        )
+        # Deliberately re-raised, not softened into a miss: this is the signal a bulk run uses to
+        # stop. Swallowing it would run a doomed lookup for every remaining contact.
+        raise ProviderUnavailable(f"{saved.note}. The fresh lookup is also unavailable: {exc}")
     if fresh.found:
         return EmailResult(True, fresh.email, f"{fresh.note} (not in your saved contacts)")
     # A fresh answer of "no email" is a real miss; saving them by hand could still work.
-    return EmailResult(False, None, f"{fresh.note}, and not in your saved Apollo contacts", retryable=fresh.retryable)
+    return EmailResult(False, None, f"{fresh.note}, and {saved.note[0].lower()}{saved.note[1:]}",
+                       retryable=fresh.retryable, code=fresh.code)

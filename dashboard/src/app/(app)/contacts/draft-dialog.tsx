@@ -56,6 +56,8 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
       contact.mutate(() => next)
       setEdit(null)
       setJudgement(null)
+      // Cleared too: a note left in the box would silently apply again on the next rewrite.
+      setInstructions("")
       onChanged()
     }
     return next
@@ -175,7 +177,7 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
               {can("drafts.act") && (
                 <>
                   <Button variant="ghost" onClick={() => setConfirm("rewrite")} disabled={isPending("generate") || c.do_not_contact}>
-                    {spin("generate", <RotateCcwIcon />)} Rewrite
+                    {spin("generate", <RotateCcwIcon />)} Rewrite{instructions.trim() ? " with note" : ""}
                   </Button>
                   <Button variant="ghost" onClick={judge} disabled={isPending("judge") || dirty} title={dirty ? "Save your changes first" : "Score this draft with the LLM judge"}>
                     {spin("judge", <FlaskConicalIcon />)} Judge

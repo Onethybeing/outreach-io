@@ -640,15 +640,29 @@ def test_a_person_not_saved_falls_through_to_a_fresh_lookup(db, monkeypatch):
     assert result.found and result.email == "jane@acme.example" and "not in your saved contacts" in result.note
 
 
-def test_a_blocked_fresh_lookup_explains_both_halves_and_stays_retryable(db, monkeypatch):
-    """The free plan refuses the fresh call. That is a state the user can fix, not a dead end."""
+def test_a_blocked_fresh_lookup_stops_the_batch_instead_of_looking_retryable(db, monkeypatch):
+    """A plan that refuses the fresh call refuses it for everyone, so a bulk run has to stop.
+
+    Softening it into a retryable miss would run a doomed lookup for every remaining contact.
+    """
     monkeypatch.setattr(apollo, "find_email_in_saved_contacts",
-                        lambda *a: apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet", retryable=True))
+                        lambda *a: apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet",
+                                                      retryable=True, code="not_saved"))
     monkeypatch.setattr(apollo, "find_email",
                         lambda *a: (_ for _ in ()).throw(apollo.ProviderUnavailable("Apollo's current plan doesn't include email lookup.")))
+    with pytest.raises(apollo.ProviderUnavailable) as raised:
+        apollo.find_email_saved_then_fresh(db, "Jane", "https://www.linkedin.com/in/jane", "acme.example")
+    assert "saved Apollo contacts" in str(raised.value) and "plan doesn't include" in str(raised.value)
+
+
+def test_someone_saved_but_unrevealed_is_not_charged_for_a_fresh_lookup(db, monkeypatch):
+    """They are already being handled through the free flow; spending a paid credit would be wrong."""
+    monkeypatch.setattr(apollo, "find_email_in_saved_contacts",
+                        lambda *a: apollo.EmailResult(False, None, "Saved in Apollo, but the email isn't revealed yet",
+                                                      retryable=True, code="not_revealed"))
+    monkeypatch.setattr(apollo, "find_email", lambda *a: pytest.fail("must not spend a fresh lookup"))
     result = apollo.find_email_saved_then_fresh(db, "Jane", "https://www.linkedin.com/in/jane", "acme.example")
-    assert not result.found and result.retryable
-    assert "saved Apollo contacts" in result.note and "plan doesn't include" in result.note
+    assert not result.found and result.retryable and "isn't revealed yet" in result.note
 
 
 def test_apollo_enrich_by_name_only_trusts_matching_company(db, monkeypatch):
