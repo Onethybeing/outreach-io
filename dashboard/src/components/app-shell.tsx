@@ -3,10 +3,12 @@
 import {
   BotIcon, ChartColumnIcon, FileTextIcon, InboxIcon, Loader2Icon, LogOutIcon, SettingsIcon, UserSearchIcon, UsersIcon,
 } from "lucide-react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { createContext, useCallback, useContext, useMemo } from "react"
 
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { post } from "@/lib/api"
@@ -84,7 +86,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <SessionContext.Provider value={session}>
       <div className="flex min-h-screen flex-col md:flex-row">
         <aside className="border-b bg-sidebar md:sticky md:top-0 md:h-screen md:w-52 md:shrink-0 md:border-r md:border-b-0">
-          <div className="flex items-center justify-between px-4 py-3 md:py-4">
+          <div className="flex items-center gap-2 px-4 py-3 md:py-4">
+            {/* The mark is pure black, so it inverts to white for dark mode. */}
+            <Image src="/logo.png" alt="" width={24} height={24} className="dark:invert" priority />
             <span className="font-semibold tracking-tight">Outreach</span>
           </div>
           <nav className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:overflow-visible">
@@ -110,6 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-muted-foreground">
                 {session.me.name ?? session.me.email} · {session.me.role}
               </span>
+              <ThemeToggle />
               <Button variant="ghost" size="sm" onClick={signOut}>
                 <LogOutIcon />
                 Sign out
@@ -125,11 +130,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function ModeBadge({ settings }: { settings: AppSettings }) {
   if (settings.app_mode === "prod") {
-    return <Badge variant="destructive">Production mode — emails go to the real contacts</Badge>
+    return <Badge variant="destructive">Production mode: emails go to the real contacts</Badge>
   }
   return (
-    <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-      Dev mode — every email goes to {settings.dev_redirect_email ?? "your own inbox"}
+    <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300">
+      Dev mode: every email goes to {settings.dev_redirect_email ?? "your own inbox"}
     </Badge>
   )
 }
@@ -137,12 +142,14 @@ function ModeBadge({ settings }: { settings: AppSettings }) {
 function SignIn() {
   return (
     <Centered>
+      <Image src="/logo.png" alt="" width={56} height={56} className="dark:invert" priority />
       <h1 className="text-lg font-semibold">Outreach</h1>
       <p className="text-sm text-muted-foreground">Sign in with a Google account an admin has added.</p>
       {/* A full page load, not <Link>: /auth/login is served by the API and redirects to Google. */}
       <a href="/auth/login" className={buttonVariants()}>
         Sign in with Google
       </a>
+      <ThemeToggle />
       <p className="text-xs text-muted-foreground">
         <Link href="/about" className="underline">
           About

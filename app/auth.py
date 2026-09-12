@@ -81,7 +81,7 @@ def require(permission: str):
 
 
 def require_for_stream(permission: str):
-    """Auth for long-lived responses (SSE). Uses its own session, closed before streaming starts —
+    """Auth for long-lived responses (SSE). Uses its own session, closed before streaming starts:
     `get_db` would hold a pooled connection until the response ends. Returns only the user id."""
 
     def dependency(request: Request) -> uuid.UUID:

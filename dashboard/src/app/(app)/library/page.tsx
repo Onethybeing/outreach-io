@@ -89,7 +89,7 @@ export default function LibraryPage() {
         error={resumes.error?.message}
         getRowId={(r) => r.id}
         search="Search CVs"
-        empty="No CVs yet — upload one to get started."
+        empty="No CVs yet. Upload one to get started."
       />
     </>
   )

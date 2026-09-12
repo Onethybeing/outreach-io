@@ -29,7 +29,7 @@ class GmailAuthError(GmailError):
 
 
 class GmailNotFound(GmailError):
-    """The thread or message no longer exists (deleted) — skip it."""
+    """The thread or message no longer exists (deleted), so skip it."""
 
 
 @dataclass
@@ -55,7 +55,7 @@ def _access_token(db: Session, force_refresh: bool = False) -> str:
         "refresh_token": creds["refresh_token"], "grant_type": "refresh_token",
     }, timeout=30)
     if response.status_code != 200:
-        raise GmailAuthError("Gmail sign-in expired or was revoked — run scripts/gmail_auth.py again and update the vault")
+        raise GmailAuthError("Gmail sign-in expired or was revoked. Run scripts/gmail_auth.py again and update the vault")
     body = response.json()
     _token = (key, body["access_token"], time.monotonic() + int(body.get("expires_in", 3600)))
     return _token[1]
@@ -76,7 +76,7 @@ def _get(db: Session, path: str, params: dict) -> dict:
         if response.status_code != 200:
             raise GmailError(f"Gmail error (HTTP {response.status_code})")
         return response.json()
-    raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
+    raise GmailAuthError("Gmail kept rejecting the access token. Sign in again with scripts/gmail_auth.py")
 
 
 def search(db: Session, query: str, max_results: int = 20) -> list[str]:
@@ -135,12 +135,12 @@ SCOPE_HINTS = ("insufficient", "scope", "accessnotconfigured", "forbidden for th
 
 
 def _send_failure(response: httpx.Response) -> GmailError:
-    """403 covers both a missing scope (stop) and a rate/quota limit (retry later) — tell them apart."""
+    """403 covers both a missing scope (stop) and a rate/quota limit (retry later), so tell them apart."""
     text = response.text[:500]
     if response.status_code == 403 and any(hint in text.lower() for hint in SCOPE_HINTS):
-        return GmailAuthError("Gmail refused the send — the token is missing the gmail.send scope")
+        return GmailAuthError("Gmail refused the send: the token is missing the gmail.send scope")
     if response.status_code in (403, 429):
-        return GmailError(f"Gmail is rate-limiting or over quota (HTTP {response.status_code}) — try again later")
+        return GmailError(f"Gmail is rate-limiting or over quota (HTTP {response.status_code}). Try again later")
     return GmailError(f"Gmail refused the send (HTTP {response.status_code}): {text[:200]}")
 
 
@@ -162,12 +162,12 @@ def send_message(db: Session, raw_message: bytes) -> tuple[str, str]:
         if response.status_code == 401:
             if attempt < last:
                 continue  # token expired early; refresh once
-            raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
+            raise GmailAuthError("Gmail kept rejecting the access token. Sign in again with scripts/gmail_auth.py")
         if response.status_code not in (200, 201):
             raise _send_failure(response)
         body = response.json()
         return body["id"], body.get("threadId", "")
-    raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
+    raise GmailAuthError("Gmail kept rejecting the access token. Sign in again with scripts/gmail_auth.py")
 
 
 def find_by_rfc_message_id(db: Session, rfc_message_id: str) -> tuple[str, str] | None:

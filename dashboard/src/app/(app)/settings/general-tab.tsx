@@ -21,7 +21,7 @@ export function GeneralTab() {
 
   async function changeMode(mode: string) {
     const saved = await run("mode", () => put<AppSettings>("/settings/mode", { mode }), (s) =>
-      s.app_mode === "prod" ? "Production mode — emails now go to the real contacts" : `Dev mode — emails go to ${s.dev_redirect_email}`,
+      s.app_mode === "prod" ? "Production mode: emails now go to the real contacts" : `Dev mode: emails go to ${s.dev_redirect_email}`,
     )
     if (saved) reloadSettings()
   }
@@ -43,7 +43,7 @@ export function GeneralTab() {
             {settings.app_mode === "prod" ? (
               <Badge variant="destructive">Production</Badge>
             ) : (
-              <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+              <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300">
                 Dev
               </Badge>
             )}

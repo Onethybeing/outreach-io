@@ -1,12 +1,48 @@
+<img src="docs/logo.png" alt="" width="72" align="left" hspace="12" />
+
 # outreach-io
 
-Resume-to-outreach LangGraph agent. See [PLAN.md](./PLAN.md) for the full design.
+Reads a CV, finds startups that fit it, works out who to contact at each, writes the emails, and
+sends them once a person approves. Built on LangGraph, FastAPI and Next.js.
+
+**Live:** [outreach-dashboard-wqb3gj6hna-ul.a.run.app](https://outreach-dashboard-wqb3gj6hna-ul.a.run.app)
+· [About](https://outreach-dashboard-wqb3gj6hna-ul.a.run.app/about)
+· [Privacy](https://outreach-dashboard-wqb3gj6hna-ul.a.run.app/privacy)
+
+Sign-in is limited to accounts the administrator has added, so the dashboard links above will ask you
+to sign in. The About and Privacy pages are public.
+
+## Demo
+
+_Recording to be added._ It will cover: upload a CV, run the agent and watch it work, approve
+candidates, find emails, review a draft, and send. In dev mode every email is redirected to the
+operator's own inbox, so nothing reaches a real person while testing.
+
+<!-- To add it: drop the file at docs/demo.gif and replace the line above with
+     ![Dashboard walkthrough](docs/demo.gif)
+     For an mp4, upload it by dragging the file into a GitHub issue or the README web editor, then
+     paste the github.com/user-attachments link GitHub gives back. -->
+
+## What it does
+
+1. **Library** stores CVs. Text is extracted, with OCR as a fallback for image-only PDFs.
+2. **Run agent** searches for startups matching the CV (N per run), reads up on each one, then finds
+   decision-makers at each (M per company) and flags anyone already in your contacts.
+3. **Candidates** is where you approve people. Approving checks they still work there.
+4. **Contacts** finds an email, writes a draft you edit and approve, then sends with the CV attached.
+5. **Replies** matches answers back to the contact and labels them (reply, bounce, out of office,
+   unsubscribe). Unsubscribes stop all future contact permanently.
+6. **Stats** tracks the funnel and reply rates per CV and per prompt version, each with its sample size.
+7. **Settings** holds the encrypted API key vault, editable node prompts, users and roles, the audit
+   log, and the dev/production toggle.
+
+See [PLAN.md](./PLAN.md) for the full design.
 
 ## Status
 
-**Phase 1** — FastAPI app, Postgres schema (Alembic), resume upload/list.
+**Phase 1**: FastAPI app, Postgres schema (Alembic), resume upload/list.
 
-**Phase 2** — backend for login, roles, API key vault and editable prompts:
+**Phase 2**: backend for login, roles, API key vault and editable prompts:
 
 | Area | Routes | Who |
 |---|---|---|
@@ -18,7 +54,7 @@ Resume-to-outreach LangGraph agent. See [PLAN.md](./PLAN.md) for the full design
 | | `POST /prompts/{node}/versions`, `/activate/{version}`, `/reset`, `/test` | admin |
 | Resumes | `GET /resumes` (all roles), `POST /resumes` (admin, operator) | |
 
-**Phase 3** — discovery graph (`app/discovery/`): resume → profile → search queries → startups →
+**Phase 3**: discovery graph (`app/discovery/`): resume → profile → search queries → startups →
 decision-makers → dedupe against contacts.
 
 | Route | What | Who |
@@ -29,7 +65,7 @@ decision-makers → dedupe against contacts.
 | `GET /runs/{id}/stream` | Same feed as server-sent events, ends with `event: end` | all roles |
 | `GET /candidates?status=&run_id=` | Proposed people across runs, with the CV each was found for | all roles |
 
-**Phase 4** — contacts (`app/contacts/`): human decisions on candidates, employment verification,
+**Phase 4**: contacts (`app/contacts/`): human decisions on candidates, employment verification,
 email lookup.
 
 | Route | What | Who |
@@ -48,15 +84,15 @@ email lookup.
 | `PUT /settings/mode` `{mode: dev\|prod}` | Switch who receives sent email | admin |
 
 Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
-Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §3.
+Email lookup: Apollo is wired in, but the free plan blocks it, see PLAN.md §3.
 
 Marking do-not-contact, an unsubscribe reply, and erasing all record a hash of the LinkedIn URL in
-`contact_suppressions`. Later runs drop those people, and approving one is refused — so an erasure
+`contact_suppressions`. Later runs drop those people, and approving one is refused, so an erasure
 can't quietly undo an opt-out. Erasing also scrubs the candidate rows that named the person and
 deletes their `.eml` copies from storage. Undoing do-not-contact lifts only an operator's own block;
 an unsubscribe the person sent themselves stands.
 
-**Phase 5** — drafts and dev-mode sending (`app/contacts/drafts.py`, `sending.py`).
+**Phase 5**: drafts and dev-mode sending (`app/contacts/drafts.py`, `sending.py`).
 
 | Route | What | Who |
 |---|---|---|
@@ -74,7 +110,7 @@ subject and a banner in the body, so contacts receive nothing. **prod** sends to
 of what was sent is archived under `outbox/`, and `expected_mode` makes a send fail rather than go
 out if an admin changed the mode in the meantime.
 
-**Phase 7** — reply tracking (`app/replies/`).
+**Phase 7**: reply tracking (`app/replies/`).
 
 | Route | What | Who |
 |---|---|---|
@@ -82,7 +118,7 @@ out if an admin changed the mode in the meantime.
 | `GET /replies?classification=` | Inbound messages with contact, startup and reply status | all roles |
 | `POST /internal/poll-replies` + `X-Internal-Token` | Same check, for Cloud Scheduler; off unless `INTERNAL_TASK_TOKEN` is set | scheduler |
 
-**Phase 8** — stats and evals (`app/stats.py`, `app/evals.py`).
+**Phase 8**: stats and evals (`app/stats.py`, `app/evals.py`).
 
 | Route | What | Who |
 |---|---|---|
@@ -93,7 +129,7 @@ out if an admin changed the mode in the meantime.
 Resume-parsing accuracy: `python scripts/eval_parse_resume.py [cases_dir] [--langfuse]` with labelled
 cases in `evals/parse_resume/cases/*.json` (format in the script's docstring).
 
-**Phase 9** — deployment (GCP project `outreach-io-sj26`, dev mode).
+**Phase 9**: deployment (GCP project `outreach-io-sj26`, dev mode).
 
 - API: Cloud Run service `outreach-api` in `us-east5` (closest region to the Neon database).
 - Files: CVs and dev `.eml` files in the private bucket `gs://outreach-io-sj26-files` (`STORAGE_BACKEND=gcs`).
@@ -104,7 +140,7 @@ cases in `evals/parse_resume/cases/*.json` (format in the script's docstring).
 - Deploy: `alembic upgrade head` then `bash scripts/deploy.sh` (Cloud Build, no local Docker).
   One instance, CPU always on, so in-process background jobs keep running.
 
-**Phase 6** — dashboard (`dashboard/`, Next.js 16 + shadcn/ui).
+**Phase 6**: dashboard (`dashboard/`, Next.js 16 + shadcn/ui).
 
 Tabs: Stats, Library (upload CVs), Run agent (live progress over SSE), Candidates (approve, reject,
 reuse, update, in bulk), Contacts (Active / Sent / No email; verify, find or enter email, draft,
@@ -154,4 +190,4 @@ pytest -q
 ```
 
 Tests use the Postgres in `DATABASE_URL`, but each runs inside a transaction that is rolled back,
-so nothing persists. Google, Groq and provider key checks are faked — no real API calls or credits.
+so nothing persists. Google, Groq and provider key checks are faked, no real API calls or credits.

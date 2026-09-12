@@ -80,13 +80,14 @@ def approve(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
         audit.record(db, user, "candidates.reject", "candidate", candidate.id, {"reason": "suppressed"})
         db.commit()
         evals.safe_signal(evals.record_candidate_decision, db, candidate, False)  # as any other rejection
-        raise ActionError(409, "This person asked not to be contacted — the candidate was rejected")
+        raise ActionError(409, "This person asked not to be contacted. The candidate was rejected")
     if _existing_contact(db, candidate) is not None:
         db.commit()
-        raise ActionError(409, "This person is already a contact — choose Reuse or Update instead")
+        raise ActionError(409, "This person is already a contact. Choose Reuse or Update instead")
     contact = Contact(
         startup_id=candidate.startup_id, run_id=run.id, resume_id=run.resume_id, cv_used_id=run.resume_id,
         name=candidate.name, title=candidate.title, linkedin_url=candidate.linkedin_url,
+        outreach_reason=candidate.reason,  # why the agent picked them; the draft prompt uses it
         verification_status=VerificationStatus.queued, approved_by=user.id,
     )
     db.add(contact)
@@ -94,7 +95,7 @@ def approve(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise ActionError(409, "This person was just added as a contact — refresh and choose Reuse or Update")
+        raise ActionError(409, "This person was just added as a contact. Refresh and choose Reuse or Update")
     _decide(candidate, CandidateStatus.approved, user, contact)
     audit.record(db, user, "candidates.approve", "candidate", candidate.id, {"contact_id": str(contact.id)})
     db.commit()
@@ -115,7 +116,7 @@ def reuse(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
     candidate, _ = _pending_candidate(db, candidate_id)
     contact = _existing_contact(db, candidate)
     if contact is None:
-        raise ActionError(409, "No existing contact for this person — approve instead")
+        raise ActionError(409, "No existing contact for this person. Approve instead")
     _decide(candidate, CandidateStatus.reused, user, contact)
     audit.record(db, user, "candidates.reuse", "candidate", candidate.id, {"contact_id": str(contact.id)})
     db.commit()
@@ -132,15 +133,15 @@ def update_existing(db: Session, candidate_id: uuid.UUID, user: User) -> Contact
     candidate, run = _pending_candidate(db, candidate_id)
     contact = _existing_contact(db, candidate)
     if contact is None:
-        raise ActionError(409, "No existing contact for this person — approve instead")
+        raise ActionError(409, "No existing contact for this person. Approve instead")
     if contact.verification_status in (VerificationStatus.queued, VerificationStatus.running):
-        raise ActionError(409, "This contact is being verified right now — try again when it finishes")
+        raise ActionError(409, "This contact is being verified right now. Try again when it finishes")
     if contact.email_lookup_status == EmailLookupStatus.running:
         # Otherwise the lookup would finish after the reset and restore the old company's email.
-        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+        raise ActionError(409, "An email lookup is running for this contact. Try again when it finishes")
     contact.startup_id, contact.run_id = candidate.startup_id, run.id
     contact.resume_id = contact.cv_used_id = run.resume_id
-    contact.name, contact.title = candidate.name, candidate.title
+    contact.name, contact.title, contact.outreach_reason = candidate.name, candidate.title, candidate.reason
     _reset_verification(contact, VerificationStatus.queued)
     contact.email = contact.email_source = contact.email_lookup_note = contact.email_looked_up_at = None
     contact.email_lookup_status = EmailLookupStatus.not_run
@@ -229,11 +230,11 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
     if contact.email_lookup_status == EmailLookupStatus.running:
         raise ActionError(409, "An email lookup is already running for this contact")
     if not force and contact.email_lookup_status in (EmailLookupStatus.found, EmailLookupStatus.not_found):
-        raise ActionError(409, f"Already looked up ({contact.email_lookup_status.value}) — use force to spend another lookup")
+        raise ActionError(409, f"Already looked up ({contact.email_lookup_status.value}). Use force to spend another lookup")
     if not force and contact.email:
-        raise ActionError(409, "This contact already has an email — use force to look one up anyway")
+        raise ActionError(409, "This contact already has an email. Use force to look one up anyway")
     if not force and contact.verification_status != VerificationStatus.verified:
-        raise ActionError(400, "Employment isn't verified yet — verify first, or use force")
+        raise ActionError(400, "Employment isn't verified yet. Verify first, or use force")
 
     provider = email_provider(db)
     contact.email_lookup_status = EmailLookupStatus.running
@@ -241,14 +242,14 @@ def lookup_email(db: Session, contact_id: uuid.UUID, user: User, force: bool = F
     startup = db.get(Startup, contact.startup_id)
     try:
         result = EMAIL_PROVIDERS[provider](db, contact.name, contact.linkedin_url, startup.website)
-    except Exception as exc:  # noqa: BLE001 — whatever happens, never leave the status stuck on 'running'
+    except Exception as exc:  # noqa: BLE001: whatever happens, never leave the status stuck on 'running'
         db.rollback()
         unavailable = isinstance(exc, apollo.ProviderUnavailable)
         if isinstance(exc, (apollo.ProviderUnavailable, apollo.EmailLookupError)):
             message = str(exc)
         else:
             logger.exception("Email lookup for contact %s crashed", contact_id)
-            message = f"Email lookup failed unexpectedly ({type(exc).__name__}) — see server logs"
+            message = f"Email lookup failed unexpectedly ({type(exc).__name__}). See server logs"
         contact = _contact(db, contact_id, lock=True)
         contact.email_lookup_status, contact.email_lookup_note = EmailLookupStatus.failed, message
         contact.email_looked_up_at = _now()
@@ -275,7 +276,7 @@ def set_manual_email(db: Session, contact_id: uuid.UUID, email: str, user: User)
         raise ActionError(422, "That doesn't look like an email address")
     contact = _contact(db, contact_id, lock=True)
     if contact.email_lookup_status == EmailLookupStatus.running:
-        raise ActionError(409, "An email lookup is running for this contact — wait for it to finish")
+        raise ActionError(409, "An email lookup is running for this contact. Wait for it to finish")
     # email_lookup_status keeps recording what the provider answered (e.g. not_found), so stats and
     # "don't pay twice" rules stay truthful; email_source says where the address in use came from.
     contact.email, contact.email_source = email, "manual"
@@ -291,9 +292,9 @@ def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: Us
     contact = _contact(db, contact_id, lock=True)
     # A lookup or send in flight already passed its do_not_contact check and would finish anyway.
     if contact.email_lookup_status == EmailLookupStatus.running:
-        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+        raise ActionError(409, "An email lookup is running for this contact. Try again when it finishes")
     if contact.send_status == SendStatus.queued:
-        raise ActionError(409, "An email is being sent to this contact — try again when it finishes")
+        raise ActionError(409, "An email is being sent to this contact. Try again when it finishes")
     contact.do_not_contact = value
     if value:
         # Kept even if the contact is later erased, so a new run can't quietly re-add them.
@@ -303,7 +304,7 @@ def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: Us
         # unsubscribe the person sent themselves stays, and keeps do_not_contact on with it.
         suppression.unsuppress(db, contact.linkedin_url)
         if suppression.is_suppressed(db, contact.linkedin_url):
-            raise ActionError(409, "This person asked to be removed themselves — that can't be undone here")
+            raise ActionError(409, "This person asked to be removed themselves. That can't be undone here")
     audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
     db.commit()
     return contact
@@ -317,11 +318,11 @@ def erase_contact(db: Session, contact_id: uuid.UUID, user: User) -> None:
     """
     contact = _contact(db, contact_id, lock=True)
     if contact.email_lookup_status == EmailLookupStatus.running:
-        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+        raise ActionError(409, "An email lookup is running for this contact. Try again when it finishes")
     if contact.verification_status in (VerificationStatus.queued, VerificationStatus.running):
-        raise ActionError(409, "This contact is being verified right now — try again when it finishes")
+        raise ActionError(409, "This contact is being verified right now. Try again when it finishes")
     if contact.send_status == SendStatus.queued:
-        raise ActionError(409, "An email is being sent to this contact — try again when it finishes")
+        raise ActionError(409, "An email is being sent to this contact. Try again when it finishes")
 
     # Erasing must not undo an opt-out: remember the hash before the row (and its flag) disappear.
     suppression.suppress(db, contact.linkedin_url, "erased", user)
@@ -363,7 +364,7 @@ def _delete_outbox_files(db: Session, contact_id: uuid.UUID, user: User) -> None
         for key in storage.list_keys(OUTBOX_PREFIX):
             if key.endswith(suffix):
                 storage.delete(key)
-    except Exception as exc:  # noqa: BLE001 — the rows are already gone; a storage hiccup must be recorded, not fatal
+    except Exception as exc:  # noqa: BLE001: the rows are already gone; a storage hiccup must be recorded, not fatal
         logger.exception("Could not remove outbox files for erased contact %s", contact_id)
         audit.record(db, user, "contacts.erase_files_failed", "contact", contact_id, {"error": str(exc)})
         db.commit()

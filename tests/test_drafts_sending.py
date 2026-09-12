@@ -40,7 +40,8 @@ def outbox(tmp_path, monkeypatch):
 
 
 def _use_prod(db):
-    db.add(AppSetting(key="app_mode", value="prod"))
+    # merge, not add: the setting may already exist in the database the tests run against.
+    db.merge(AppSetting(key="app_mode", value="prod"))
     db.commit()
 
 

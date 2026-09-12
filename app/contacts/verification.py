@@ -161,11 +161,11 @@ def execute_verification(db: Session, contact_id: uuid.UUID) -> None:
     except EXPECTED_ERRORS as exc:
         db.rollback()
         contact.verification_status, contact.verification_note = VerificationStatus.failed, str(exc)
-    except Exception as exc:  # noqa: BLE001 — a job must always leave a final status
+    except Exception as exc:  # noqa: BLE001: a job must always leave a final status
         db.rollback()
         logger.exception("Verification for contact %s crashed", contact_id)
         contact.verification_status = VerificationStatus.failed
-        contact.verification_note = f"Unexpected error ({type(exc).__name__}) — see server logs"
+        contact.verification_note = f"Unexpected error ({type(exc).__name__}). See server logs"
     finally:
         contact.verification_source = "brightdata"
         contact.verified_at = _now()
@@ -187,7 +187,7 @@ def submit_verification(contact_id: uuid.UUID) -> None:
 
 def fail_interrupted_jobs(db: Session) -> int:
     """At startup, queued/running verifications and running lookups belonged to the old process."""
-    note = "Interrupted by a server restart — run it again"
+    note = "Interrupted by a server restart. Run it again"
     verifications = db.execute(
         update(Contact)
         .where(Contact.verification_status.in_([VerificationStatus.queued, VerificationStatus.running]))

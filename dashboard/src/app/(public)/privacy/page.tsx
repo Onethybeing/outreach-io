@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 export const metadata: Metadata = {
-  title: "Privacy policy — Outreach",
+  title: "Privacy policy for Outreach",
   description: "What Outreach stores, why, and how to have it deleted.",
 }
 
@@ -27,23 +27,23 @@ export default function PrivacyPage() {
       <Section title="What is stored">
         <ul className="list-disc space-y-1.5 pl-5">
           <li>
-            <strong>Your Google account</strong> — email address and name, taken from Google sign-in, to identify you and
+            <strong>Your Google account</strong>: email address and name, taken from Google sign-in, to identify you and
             record what you did in the app.
           </li>
           <li>
-            <strong>CVs you upload</strong> — the file and the text extracted from it.
+            <strong>CVs you upload</strong>: the file and the text extracted from it.
           </li>
           <li>
-            <strong>Business contact details</strong> — names, job titles, employers and LinkedIn profile links of people at
+            <strong>Business contact details</strong>: names, job titles, employers and LinkedIn profile links of people at
             the companies being contacted, found through web search and checked against Bright Data and Apollo. Work email
             addresses come from Apollo, or an operator types in an address they already had.
           </li>
           <li>
-            <strong>Emails</strong> — the drafts written in the app, and the sent and received messages in the connected
+            <strong>Emails</strong>: the drafts written in the app, and the sent and received messages in the connected
             Gmail account that belong to those conversations, so replies can be matched to the right contact.
           </li>
           <li>
-            <strong>Activity records</strong> — an audit log of actions taken in the app, and API-usage counters.
+            <strong>Activity records</strong>: an audit log of actions taken in the app, and API-usage counters.
           </li>
         </ul>
       </Section>
@@ -82,7 +82,7 @@ export default function PrivacyPage() {
           your details removed, or you replied and want the conversation deleted, email{" "}
           <a className="underline" href="mailto:sourav.jhinjha@gmail.com">sourav.jhinjha@gmail.com</a>. The administrator
           removes the records by hand, normally within 30 days: the contact details, the record of the emails, the stored
-          copies of the messages, and — removed by the administrator in the same pass — the messages in the sending mailbox
+          copies of the messages, and (removed by the administrator in the same pass) the messages in the sending mailbox
           and the diagnostic traces of anything written about you.
         </p>
         <p>

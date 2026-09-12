@@ -158,7 +158,7 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
         source.close()
         setStream("lost")
       } else if (source.readyState === EventSource.CLOSED) {
-        // EventSource gives up for good on a non-200 (expired session, 403, proxy error) — say so.
+        // EventSource gives up for good on a non-200 (expired session, 403, proxy error), so say so.
         setStream("lost")
       }
     })
@@ -194,7 +194,7 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
                 variant="outline"
                 size="sm"
                 disabled={isPending("judge")}
-                onClick={() => run("judge", () => post(`/evals/runs/${runId}/startups`), "Judging startup relevance — scores show up in Stats")}
+                onClick={() => run("judge", () => post(`/evals/runs/${runId}/startups`), "Judging startup relevance. Scores show up in Stats")}
               >
                 <FlaskConicalIcon /> Judge startups
               </Button>
@@ -225,12 +225,12 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
               <div key={e.id} className="flex gap-2 py-0.5">
                 <span className="shrink-0 text-muted-foreground">{new Date(e.created_at).toLocaleTimeString()}</span>
                 <span className="w-32 shrink-0 truncate text-muted-foreground">{e.node}</span>
-                <span className={cn(e.kind === "failed" && "text-destructive", e.kind === "warning" && "text-amber-700", e.kind === "completed" && "text-emerald-700")}>
+                <span className={cn(e.kind === "failed" && "text-destructive", e.kind === "warning" && "text-amber-700 dark:text-amber-400", e.kind === "completed" && "text-emerald-700 dark:text-emerald-400")}>
                   {e.message}
                 </span>
               </div>
             ))}
-            {stream === "lost" && <p className="text-destructive">Lost the live feed — reload the page.</p>}
+            {stream === "lost" && <p className="text-destructive">Lost the live feed. Reload the page.</p>}
             <div ref={logEnd} />
           </div>
         </CardContent>
@@ -263,9 +263,9 @@ function RunPanel({ runId, onFinished }: { runId: string; onFinished: () => void
                         s.name
                       )}
                     </TableCell>
-                    <TableCell className="tabular-nums">{s.relevance === null ? "—" : s.relevance.toFixed(2)}</TableCell>
+                    <TableCell className="tabular-nums">{s.relevance === null ? "-" : s.relevance.toFixed(2)}</TableCell>
                     <TableCell className="tabular-nums">{data.candidates.filter((c) => c.startup_id === s.id).length}</TableCell>
-                    <TableCell className="max-w-xl min-w-64 whitespace-normal text-muted-foreground">{s.description ?? "—"}</TableCell>
+                    <TableCell className="max-w-xl min-w-64 whitespace-normal text-muted-foreground">{s.description ?? "-"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -35,14 +35,14 @@ def _check_can_draft(contact: Contact, force: bool) -> None:
     if contact.do_not_contact:
         raise ActionError(400, "This contact asked not to be contacted")
     if not contact.email:
-        raise ActionError(400, "No email yet — find or enter one first")
+        raise ActionError(400, "No email yet. Find or enter one first")
     # Manual entry is the user vouching for the contact (PLAN.md §15 #7).
     if contact.verification_status != VerificationStatus.verified and contact.email_source != "manual":
-        raise ActionError(400, "Employment isn't verified — verify first, or enter the email manually")
+        raise ActionError(400, "Employment isn't verified. Verify first, or enter the email manually")
     if contact.send_status in SENT and not force:
-        raise ActionError(409, "Already emailed — use force to draft again")
+        raise ActionError(409, "Already emailed. Use force to draft again")
     if contact.draft_status != DraftStatus.none and not force:
-        raise ActionError(409, f"A draft already exists ({contact.draft_status.value}) — use force to regenerate")
+        raise ActionError(409, f"A draft already exists ({contact.draft_status.value}). Use force to regenerate")
 
 
 class State(TypedDict, total=False):
@@ -61,6 +61,9 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             "contact_title": contact.verified_title or contact.title or "",
             "startup_name": startup.name,
             "startup_description": startup.description or "",
+            # What discovery learned about the company, so the email can name something real.
+            "startup_brief": json.dumps(startup.brief) if startup.brief else "",
+            "contact_reason": contact.outreach_reason or "",
             "sender_name": profile.get("name") or "",
         })
         raw = llm.complete_json(
@@ -88,7 +91,7 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     startup = db.get(Startup, contact.startup_id)
     resume = db.get(Resume, contact.cv_used_id)
     if not resume.parsed_profile:
-        raise ActionError(400, "The CV used for this contact hasn't been parsed — run discovery on it first")
+        raise ActionError(400, "The CV used for this contact hasn't been parsed. Run discovery on it first")
     db.commit()  # release the lock during the LLM call; the checks are repeated before saving
 
     client = telemetry.langfuse_client(db)
@@ -107,10 +110,10 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     except EXPECTED_ERRORS as exc:
         db.rollback()
         raise ActionError(502, f"Draft generation failed: {exc}")
-    except Exception as exc:  # noqa: BLE001 — surface as a normal action error, never a bare 500 / dead bulk job
+    except Exception as exc:  # noqa: BLE001: surface as a normal action error, never a bare 500 / dead bulk job
         db.rollback()
         logger.exception("Draft generation for contact %s crashed", contact_id)
-        raise ActionError(502, f"Draft generation failed unexpectedly ({type(exc).__name__}) — see server logs")
+        raise ActionError(502, f"Draft generation failed unexpectedly ({type(exc).__name__}). See server logs")
     finally:
         telemetry.flush(client)
 
@@ -140,7 +143,7 @@ def edit(db: Session, contact_id: uuid.UUID, subject: str, body: str, user: User
     if contact is None:
         raise ActionError(404, "Contact not found")
     if contact.draft_status == DraftStatus.none:
-        raise ActionError(409, "There's no draft to edit — generate one first")
+        raise ActionError(409, "There's no draft to edit. Generate one first")
     if contact.send_status in SENT:
         raise ActionError(409, "This draft was already sent")
     changed = (subject, body) != (contact.draft_subject, contact.draft_text)
@@ -194,7 +197,7 @@ def execute_bulk(db: Session, contact_ids: list[uuid.UUID], user_id: uuid.UUID) 
             continue
         try:
             generate(db, contact_id, user)
-        except Exception as exc:  # noqa: BLE001 — one bad contact must not stop the rest of the batch
+        except Exception as exc:  # noqa: BLE001: one bad contact must not stop the rest of the batch
             db.rollback()
             logger.warning("Bulk draft for %s skipped: %s", contact_id, exc, exc_info=not isinstance(exc, ActionError))
 

@@ -34,7 +34,7 @@ export function UsersTab() {
 
   async function add(event: React.FormEvent) {
     event.preventDefault()
-    const created = await run("add", () => post<User>("/users", { email, name: name || null, role }), (u) => `Added ${u.email} — they can sign in with Google now`)
+    const created = await run("add", () => post<User>("/users", { email, name: name || null, role }), (u) => `Added ${u.email}. They can sign in with Google now`)
     if (created) {
       setEmail("")
       setName("")
@@ -58,7 +58,7 @@ export function UsersTab() {
           </span>
         ),
       },
-      { accessorKey: "name", header: "Name", cell: ({ row }) => row.original.name ?? "—" },
+      { accessorKey: "name", header: "Name", cell: ({ row }) => row.original.name ?? "-" },
       {
         accessorKey: "role",
         header: "Role",
@@ -104,7 +104,7 @@ export function UsersTab() {
               <SelectContent>
                 {ROLES.map((r) => (
                   <SelectItem key={r.value} value={r.value}>
-                    <span className="capitalize">{r.value}</span> <span className="text-muted-foreground">— {r.hint}</span>
+                    <span className="capitalize">{r.value}</span> <span className="text-muted-foreground">({r.hint})</span>
                   </SelectItem>
                 ))}
               </SelectContent>

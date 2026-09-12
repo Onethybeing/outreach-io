@@ -50,7 +50,7 @@ def company_key(name: str | None) -> str:
 
 # Company name after "at"/"@", up to a separator. A dash only separates when spaced
 # ("Beta Labs - hiring"), so hyphenated names ("Hugging-Face") stay whole.
-_TITLE_COMPANY = re.compile(r"(?:\b(?P<at>at)\b|(?P<sign>@))\s*(?P<company>.+?)(?=\s[-–—]\s|[|,·()]|$)", re.I)
+_TITLE_COMPANY = re.compile(r"(?:\b(?P<at>at)\b|(?P<sign>@))\s*(?P<company>.+?)(?=\s[-\u2013\u2014]\s|[|,·()]|$)", re.I)
 _GENERIC_SUFFIXES = {
     "ai", "labs", "lab", "hq", "io", "app", "tech", "technologies", "technology", "health",
     "software", "systems", "group", "global", "computing", "inc", "co",
@@ -62,7 +62,7 @@ _GENERIC_SUFFIXES = {
 def _same_company(named: str, target: str) -> bool:
     """Equal, or one name is the other plus a generic tail, in either direction.
 
-    'Multiverse' ~ 'Multiverse Computing', 'Hippocratic AI' ~ 'Hippocratic' — but not
+    'Multiverse' ~ 'Multiverse Computing', 'Hippocratic AI' ~ 'Hippocratic', but not
     'Sapling Says' ~ 'Sapling', 'Meta' ~ 'Metaview', 'Scale' ~ 'Upscale'.
     """
     if named == target:
@@ -74,7 +74,7 @@ def _same_company(named: str, target: str) -> bool:
 def title_names_other_company(title: str | None, startup_name: str, website: str | None = None) -> bool:
     """True when a title like 'Founder at Sapling Says' clearly names a company other than the startup.
 
-    Reads only the first 'at X' / '@X'. Deliberately conservative — employment is verified later,
+    Reads only the first 'at X' / '@X'. Deliberately conservative, because employment is verified later,
     so a wrong drop costs more than a wrong keep: after a plain "at", only a capitalized word counts
     as a company ("agents at scale" is a phrase, not a company). No company → False.
     """

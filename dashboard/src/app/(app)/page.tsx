@@ -42,7 +42,7 @@ export default function StatsPage() {
     <>
       <PageHeader
         title="Stats"
-        description="How the pipeline is doing. Every rate shows its sample size — don't read much into small n."
+        description="How the pipeline is doing. Every rate shows its sample size, so don't read much into small n."
         actions={
           <>
             <Select value={days} onValueChange={setDays}>
@@ -99,7 +99,7 @@ export default function StatsPage() {
             <Kpi label="Candidates found" value={data.kpis.candidates_found} />
             <Kpi label="Runs" value={data.kpis.runs} />
             <Kpi label="CVs in library" value={data.kpis.resumes} />
-            <Kpi label="Avg run time" value={data.agent_health.avg_run_seconds === null ? "—" : `${Math.round(data.agent_health.avg_run_seconds)}s`} />
+            <Kpi label="Avg run time" value={data.agent_health.avg_run_seconds === null ? "-" : `${Math.round(data.agent_health.avg_run_seconds)}s`} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -172,7 +172,7 @@ export default function StatsPage() {
                 head={["Version", "Drafts", "Sent", "Reply rate", "Edited before approval", "Avg judge score"]}
                 rows={data.per_prompt_version.map((p) => [
                   `v${p.version}`, p.drafts, p.sent, fmtRate(p.reply_rate), fmtRate(p.edited_before_approval),
-                  p.avg_judge_score.value === null ? `— (n=${p.avg_judge_score.n})` : `${p.avg_judge_score.value} (n=${p.avg_judge_score.n})`,
+                  p.avg_judge_score.value === null ? `- (n=${p.avg_judge_score.n})` : `${p.avg_judge_score.value} (n=${p.avg_judge_score.n})`,
                 ])}
               />
             </CardContent>
@@ -196,7 +196,7 @@ function Kpi({ label, value }: { label: string; value: number | string | Rate })
       </CardHeader>
       <CardContent className="px-4">
         <div className="text-2xl font-semibold tabular-nums">
-          {rate ? (rate.value === null ? "—" : `${(rate.value * 100).toFixed(1)}%`) : String(value)}
+          {rate ? (rate.value === null ? "-" : `${(rate.value * 100).toFixed(1)}%`) : String(value)}
         </div>
         {rate && <div className="text-xs text-muted-foreground">n={rate.n}</div>}
       </CardContent>

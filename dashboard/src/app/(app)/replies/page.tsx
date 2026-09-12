@@ -43,7 +43,7 @@ export default function RepliesPage() {
         cell: ({ row: { original: r } }) => (
           <div>
             <div className="font-medium">{r.contact_name}</div>
-            <div className="text-xs text-muted-foreground">{r.contact_email ?? "—"}</div>
+            <div className="text-xs text-muted-foreground">{r.contact_email ?? "-"}</div>
           </div>
         ),
       },
@@ -62,7 +62,7 @@ export default function RepliesPage() {
         accessorKey: "snippet",
         header: "Message",
         meta: { className: "min-w-72 max-w-xl whitespace-normal" },
-        cell: ({ row }) => <span className="line-clamp-3 text-muted-foreground">{row.original.snippet ?? "—"}</span>,
+        cell: ({ row }) => <span className="line-clamp-3 text-muted-foreground">{row.original.snippet ?? "-"}</span>,
       },
     ],
     [],

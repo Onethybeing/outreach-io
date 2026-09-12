@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
 
     # Starting mode only: admins switch it at runtime in Settings (stored in app_settings).
-    app_mode: str = "dev"  # "dev" | "prod" — see PLAN.md §6
+    app_mode: str = "dev"  # "dev" | "prod". See PLAN.md §6
     # Dev mode sends real email, but every message goes here instead of the contact. Empty falls
     # back to the Gmail sender address, so a misconfiguration still can't reach a stranger.
     dev_redirect_email: str = ""

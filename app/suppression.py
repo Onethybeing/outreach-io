@@ -39,7 +39,7 @@ def suppress(db: Session, linkedin_url: str, reason: str, user: User | None = No
 
 
 def unsuppress(db: Session, linkedin_url: str) -> None:
-    """Undo an operator's own block — e.g. do-not-contact was ticked on the wrong person.
+    """Undo an operator's own block, e.g. do-not-contact was ticked on the wrong person.
 
     A block the person themselves asked for (an unsubscribe reply) or one recorded at erasure is
     deliberately not lifted: an operator must not be able to undo someone else's decision.

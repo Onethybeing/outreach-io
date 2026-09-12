@@ -21,14 +21,14 @@ const COLUMNS: ColumnDef<AuditEntry>[] = [
   {
     id: "target",
     header: "Target",
-    cell: ({ row: { original: e } }) => (e.target_type ? <span className="font-mono text-xs">{`${e.target_type}:${e.target_id ?? ""}`}</span> : "—"),
+    cell: ({ row: { original: e } }) => (e.target_type ? <span className="font-mono text-xs">{`${e.target_type}:${e.target_id ?? ""}`}</span> : "-"),
   },
   {
     id: "details",
     header: "Details",
     meta: { className: "max-w-md" },
     cell: ({ row: { original: e } }) => {
-      const text = e.details ? JSON.stringify(e.details) : "—"
+      const text = e.details ? JSON.stringify(e.details) : "-"
       return (
         <span className="block truncate font-mono text-xs text-muted-foreground" title={text}>
           {text}

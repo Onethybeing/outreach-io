@@ -228,7 +228,7 @@ def send_approved_bulk(body: BulkActionIn, db: Session = Depends(get_db), user: 
     """Every contact with an approved draft that hasn't been sent. dry_run=true (default) only counts."""
     mode = service.app_mode(db)
     if body.expected_mode and body.expected_mode != mode:
-        raise service.ActionError(409, f"The sending mode is now '{mode}', not '{body.expected_mode}' — check who this would reach and try again")
+        raise service.ActionError(409, f"The sending mode is now '{mode}', not '{body.expected_mode}'. Check who this would reach and try again")
     eligible = sending.bulk_eligible(db, body.contact_ids)
     if not body.dry_run and eligible:
         sending.submit_bulk(eligible, user.id, mode)

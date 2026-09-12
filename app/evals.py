@@ -76,6 +76,9 @@ def judge_draft(db: Session, contact_id: uuid.UUID) -> dict | None:
         "candidate_profile": json.dumps(resume.parsed_profile or {}),
         "email_subject": contact.draft_subject or "", "email_body": contact.draft_text,
         "startup_name": startup.name, "startup_description": startup.description or "", "contact_name": contact.name,
+        # The judge needs the same company facts the draft was written from, or it can't tell an
+        # invented funding round from a real one.
+        "startup_brief": json.dumps(startup.brief) if startup.brief else "",
     })
     graded = (contact.draft_subject, contact.draft_text)  # captured before the slow call
     client = telemetry.langfuse_client(db)
@@ -138,7 +141,7 @@ def _safely(fn, *args) -> None:
     try:
         with SessionLocal() as db:
             fn(db, *args)
-    except Exception:  # noqa: BLE001 — evals are best-effort
+    except Exception:  # noqa: BLE001: evals are best-effort
         logger.exception("Eval job %s%r failed", fn.__name__, args)
 
 

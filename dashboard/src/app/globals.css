@@ -117,6 +117,30 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* The theme sweep is drawn by the toggle (components/theme-toggle.tsx): the incoming theme is
+   clipped to a circle that grows from the switch. The old view stays put underneath it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 0;
+}
+
+::view-transition-new(root) {
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

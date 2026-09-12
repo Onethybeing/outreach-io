@@ -43,7 +43,7 @@ def search(
             break
 
         if response.status_code == 401:
-            raise SearchError("Tavily rejected the API key — check Settings → Vault")
+            raise SearchError("Tavily rejected the API key. Check Settings > Vault")
         if response.status_code in (429, 432, 433):
             raise SearchError(f"Tavily usage limit reached (HTTP {response.status_code})")
         if response.status_code != 200:

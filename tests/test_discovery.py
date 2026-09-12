@@ -62,6 +62,9 @@ class FakeWorld:
         self.fail_on: str | None = None
         self.fail_kdms_on_call: int | None = None
         self.kdm_calls = 0
+        self.research_calls = 0
+        self.kdms: dict | None = None  # set to override what find_kdms returns
+        self.brief_override: dict | None = None
 
     def search(self, db, query, max_results=5, include_domains=None, content_chars=400):
         self.searches.append(query)
@@ -87,10 +90,30 @@ class FakeWorld:
             return {"queries": ["AI infra startups", "ai infra startups ", "RAG startups hiring", 7]}
         if name == "discover_startups":
             return {"startups": self.startups}
+        if name == "research_startup":
+            self.research_calls += 1
+            if self.brief_override is not None:
+                return self.brief_override
+            return {
+                "what_they_do": "Builds retrieval infrastructure.",
+                "product": "A hosted vector search API",
+                "stage": "Series A",
+                "team_size": 18,
+                # The second item cites a URL the search never returned: it must be dropped.
+                "recent_news": [
+                    {"fact": "Raised a Series A", "url": "https://news.example/acme"},
+                    {"fact": "Opened an office on the moon", "url": "https://invented.example/nope"},
+                ],
+                "tech_signals": ["RAG", "vector search"],
+                "hiring_signals": "ML engineers",
+                "overlap_with_candidate": ["Has built RAG pipelines"],
+            }
         if name == "find_kdms":
             self.kdm_calls += 1
             if self.kdm_calls == self.fail_kdms_on_call:
                 raise llm.LLMError("Groq error: failed on a later startup")
+            if self.kdms is not None:
+                return self.kdms
             if "Acme" in prompt:
                 return {"people": [
                     {"name": "Other", "title": "CEO at Acme Vectorless", "linkedin_url": "https://www.linkedin.com/in/lookalike"},
@@ -145,6 +168,14 @@ def test_happy_path_cleans_and_dedupes(db, resume, world):
     beta = next(s for s in startups if s.name == "Beta Labs")
     assert beta.source_url is None  # URL the search never returned is not stored
 
+    # Researched once per startup that produced someone to contact; the brief feeds the drafts.
+    assert world.research_calls == len(startups)  # both startups have candidates in this run
+    acme = next(s for s in startups if s.name == "Acme Vector")
+    assert acme.researched_at and acme.brief["product"] == "A hosted vector search API"
+    assert acme.brief["tech_signals"] == ["RAG", "vector search"]
+    # A citation the model invented is kept as a fact but stripped of its made-up source.
+    assert [n["url"] for n in acme.brief["recent_news"]] == ["https://news.example/acme", None]
+
     candidates = {c.linkedin_url: c for c in db.scalars(select(Candidate).where(Candidate.run_id == run.id))}
     # Acme: Jane + Already fill its cap of 2 (Ghost's link was never in search results).
     # Beta: Sam + Lee — Sam was never added at Acme because the cap was hit first.
@@ -171,6 +202,31 @@ def test_happy_path_cleans_and_dedupes(db, resume, world):
 
     db.refresh(resume)
     assert resume.parsed_profile["skills"] == ["Python", "RAG"] and resume.parsed_profile["years_experience"] == 4.0
+
+
+def test_research_is_skipped_when_nobody_was_found(db, resume, world):
+    """No decision-makers means no email, so the run must not pay to research the companies."""
+    world.kdms = {"people": []}
+    run = _make_run(db, resume)
+    graph.execute_run(db, run.id)
+    db.refresh(run)
+    assert world.research_calls == 0
+    assert not any(s.brief for s in db.scalars(select(Startup).where(Startup.run_id == run.id)))
+
+
+def test_a_malformed_brief_costs_one_company_not_the_run(db, resume, world):
+    # A list where a URL was asked for used to raise while checking it against the search results.
+    world.brief_override = {
+        "what_they_do": "Builds things.",
+        "stage": True,  # a bool must not become the string "True" in a draft
+        "recent_news": [{"fact": "Raised money", "url": ["https://news.example/acme"]}],
+    }
+    run = _make_run(db, resume)
+    graph.execute_run(db, run.id)
+    db.refresh(run)
+    assert run.status == RunStatus.completed, run.error
+    brief = next(s.brief for s in db.scalars(select(Startup).where(Startup.run_id == run.id)) if s.brief)
+    assert brief["stage"] is None and brief["recent_news"] == [{"fact": "Raised money", "url": None}]
 
 
 def test_person_at_two_startups_is_proposed_once(db, resume, world):
@@ -422,6 +478,7 @@ def started(monkeypatch):
 
 
 def test_start_run_api(db, resume, keys, started, make_user, login):
+    prompts.seed_defaults(db)  # starting a run needs an active prompt for every node
     client = login(make_user(UserRole.operator))
     response = client.post("/runs", json={"resume_id": str(resume.id), "num_startups": 2, "num_kdms_per_company": 3})
     assert response.status_code == 202

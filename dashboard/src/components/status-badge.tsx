@@ -2,10 +2,10 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 const TONES = {
-  good: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  info: "border-sky-200 bg-sky-50 text-sky-700",
-  warn: "border-amber-200 bg-amber-50 text-amber-800",
-  bad: "border-red-200 bg-red-50 text-red-700",
+  good: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
+  info: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300",
+  warn: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300",
+  bad: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300",
   muted: "text-muted-foreground",
 }
 
@@ -20,7 +20,7 @@ const TONE_BY_STATUS: Record<string, keyof typeof TONES> = {
 const LABELS: Record<string, string> = { sent_dev: "sent (dev)", awaiting_user: "needs you", not_run: "not run" }
 
 export function StatusBadge({ status, title, className }: { status: string | null | undefined; title?: string | null; className?: string }) {
-  if (!status) return <span className="text-muted-foreground">—</span>
+  if (!status) return <span className="text-muted-foreground">-</span>
   return (
     <Badge variant="outline" title={title ?? undefined} className={cn(TONES[TONE_BY_STATUS[status] ?? "muted"], className)}>
       {LABELS[status] ?? status.replaceAll("_", " ")}

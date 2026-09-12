@@ -79,7 +79,7 @@ def _test_gmail(c: dict) -> tuple[bool, str]:
         timeout=TIMEOUT,
     )
     if token.status_code != 200:
-        return False, "Refresh token rejected — rerun scripts/gmail_auth.py"
+        return False, "Refresh token rejected. Rerun scripts/gmail_auth.py"
     profile = _bearer_get(
         "https://gmail.googleapis.com/gmail/v1/users/me/profile", token.json()["access_token"]
     )
