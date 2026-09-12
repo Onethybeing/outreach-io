@@ -230,6 +230,34 @@ def test_a_failed_send_is_not_recorded_as_sent(db, contact, operator, llm_answer
     assert db.scalar(select(EmailEvent).where(EmailEvent.contact_id == contact.id)) is None
 
 
+def test_a_lost_response_is_reconciled_instead_of_sent_twice(db, contact, operator, llm_answer, outbox, monkeypatch):
+    """Gmail accepted the message but the reply never arrived: retrying must not email them again."""
+    _approved(db, operator, contact)
+    monkeypatch.setattr(sending.gmail, "send_message", _raise(sending.gmail.GmailError("Could not reach Gmail: ReadTimeout")))
+    assert operator.post(f"/contacts/{contact.id}/send").status_code == 502
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.failed and contact.rfc_message_id
+
+    # It had in fact gone out — the next attempt finds it and records it rather than resending.
+    monkeypatch.setattr(sending.gmail, "find_by_rfc_message_id", lambda db_, mid: ("gmail-lost", "thread-lost"))
+    retry = operator.post(f"/contacts/{contact.id}/send")
+    assert retry.status_code == 409 and "already been sent" in retry.json()["detail"]
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.sent_dev and contact.gmail_message_id == "gmail-lost"
+    assert outbox.messages == []  # nothing was sent a second time
+
+
+def test_send_refuses_when_the_mode_changed_under_the_operator(db, contact, operator, llm_answer, outbox):
+    _approved(db, operator, contact)
+    _use_prod(db)
+    # The dashboard was showing dev; the admin switched to prod in the meantime.
+    response = operator.post(f"/contacts/{contact.id}/send?expected_mode=dev")
+    assert response.status_code == 409 and "now 'prod'" in response.json()["detail"]
+    assert outbox.messages == []
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.none
+
+
 def _raise(exc):
     def fail(*args, **kwargs):
         raise exc

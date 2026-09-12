@@ -241,14 +241,20 @@ What each role can see and click is in §9.
 
 ## 6. Dev vs. Prod mode
 
-- Global toggle in `app_settings`, defaults to **Dev**. Only admins can change it.
-- **Dev mode:** `send_email` never calls the Gmail send API — it writes a complete `.eml` (From,
-  To, Subject, body, the CV used for that contact attached) to `storage/outbox/`, records an
-  outbound email event, and marks `send_status = sent_dev`. Built in Phase 5; real Gmail sending is
-  not wired in yet, and prod mode currently refuses to send.
-- **Prod mode:** needs the toggle *and* a second confirmation modal before the first real send in
-  a session. Every real send is audit-logged.
-- No real email is sent until you explicitly say so.
+- Global toggle in `app_settings`, defaults to **Dev**. Only admins can change it (`PUT /settings/mode`,
+  audit-logged); `APP_MODE` only seeds it. Both modes send real email through Gmail with the CV
+  attached — the mode decides **who receives it**.
+- **Dev mode:** every message goes to `DEV_REDIRECT_EMAIL` (falling back to the sending account),
+  with `[DEV → real@address]` in the subject and a banner in the body naming the intended recipient.
+  Contacts receive nothing. Recorded as `send_status = sent_dev`, so these stay out of reply
+  tracking and out of the real "sent" numbers.
+- **Prod mode:** goes to the contact's own address. Switching to it needs a confirmation modal, and
+  every send carries `expected_mode`: if an admin changed the mode after the operator was shown the
+  warning, the send is refused instead of going out. Every send is audit-logged (without the
+  recipient's address, which erasure cannot reach).
+- The MIME `Message-ID` is saved before the send, so a lost Gmail response is reconciled by
+  searching for it rather than turning into a second email to the same person.
+- A copy of exactly what was sent is archived under `outbox/`; contact erasure deletes those.
 
 ---
 

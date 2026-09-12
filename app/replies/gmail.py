@@ -131,9 +131,23 @@ def get_message(db: Session, message_id: str) -> GmailMessage:
     return parse_message(_get(db, f"/messages/{message_id}", {"format": "full"}))
 
 
+SCOPE_HINTS = ("insufficient", "scope", "accessnotconfigured", "forbidden for this user")
+
+
+def _send_failure(response: httpx.Response) -> GmailError:
+    """403 covers both a missing scope (stop) and a rate/quota limit (retry later) — tell them apart."""
+    text = response.text[:500]
+    if response.status_code == 403 and any(hint in text.lower() for hint in SCOPE_HINTS):
+        return GmailAuthError("Gmail refused the send — the token is missing the gmail.send scope")
+    if response.status_code in (403, 429):
+        return GmailError(f"Gmail is rate-limiting or over quota (HTTP {response.status_code}) — try again later")
+    return GmailError(f"Gmail refused the send (HTTP {response.status_code}): {text[:200]}")
+
+
 def send_message(db: Session, raw_message: bytes) -> tuple[str, str]:
     """Send a built MIME message. Returns (gmail message id, thread id)."""
     payload = {"raw": base64.urlsafe_b64encode(raw_message).decode()}
+    last = 2 - 1
     for attempt in range(2):
         telemetry.heartbeat()
         try:
@@ -143,13 +157,24 @@ def send_message(db: Session, raw_message: bytes) -> tuple[str, str]:
                 json=payload, timeout=60,
             )
         except httpx.HTTPError as exc:
+            # The message may still have been accepted, so the caller must check before retrying.
             raise GmailError(f"Could not reach Gmail: {type(exc).__name__}")
-        if response.status_code == 401 and attempt == 0:
-            continue  # token expired early; refresh once
-        if response.status_code == 403:
-            raise GmailAuthError("Gmail refused the send — the token is missing the gmail.send scope")
+        if response.status_code == 401:
+            if attempt < last:
+                continue  # token expired early; refresh once
+            raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
         if response.status_code not in (200, 201):
-            raise GmailError(f"Gmail refused the send (HTTP {response.status_code}): {response.text[:200]}")
+            raise _send_failure(response)
         body = response.json()
         return body["id"], body.get("threadId", "")
     raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
+
+
+def find_by_rfc_message_id(db: Session, rfc_message_id: str) -> tuple[str, str] | None:
+    """Find a message we built by its MIME Message-ID. Used to check whether a send that appeared
+    to fail actually went out. Returns (gmail message id, thread id)."""
+    ids = search(db, f"rfc822msgid:{rfc_message_id}", max_results=1)
+    if not ids:
+        return None
+    data = _get(db, f"/messages/{ids[0]}", {"format": "minimal"})
+    return data["id"], data.get("threadId", "")

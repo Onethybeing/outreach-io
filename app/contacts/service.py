@@ -299,8 +299,11 @@ def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: Us
         # Kept even if the contact is later erased, so a new run can't quietly re-add them.
         suppression.suppress(db, contact.linkedin_url, "do_not_contact", user)
     else:
-        # Undoing has to lift the block too, or approving them later would still be refused.
+        # Undoing lifts an operator's own block, so approving them later isn't refused. An
+        # unsubscribe the person sent themselves stays, and keeps do_not_contact on with it.
         suppression.unsuppress(db, contact.linkedin_url)
+        if suppression.is_suppressed(db, contact.linkedin_url):
+            raise ActionError(409, "This person asked to be removed themselves — that can't be undone here")
     audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
     db.commit()
     return contact

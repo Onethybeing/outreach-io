@@ -35,7 +35,7 @@ export function sendSuccess(contact: Contact): string {
 type DraftDialogProps = { contactId: string | null; onClose: () => void; onChanged: () => void }
 
 export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps) {
-  const { can, settings } = useSession()
+  const { can, settings, reloadSettings } = useSession()
   const contact = useApi<Contact>(contactId ? `/contacts/${contactId}` : null)
   const emails = useApi<EmailEvent[]>(contactId ? `/contacts/${contactId}/emails` : null)
   const [edit, setEdit] = useState<{ subject: string; body: string } | null>(null)
@@ -71,7 +71,9 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
     applied(await run("generate", () => post<Contact>(`/contacts/${contactId}/draft/generate${force ? "?force=true" : ""}`), "Draft written"))
 
   async function send() {
-    applied(await run("send", () => post<Contact>(`/contacts/${contactId}/send${alreadySent ? "?force=true" : ""}`), sendSuccess))
+    const params = new URLSearchParams({ expected_mode: settings.app_mode })
+    if (alreadySent) params.set("force", "true")
+    applied(await run("send", () => post<Contact>(`/contacts/${contactId}/send?${params}`), sendSuccess))
     emails.reload()
   }
 
@@ -189,7 +191,10 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
         />
         <ConfirmDialog
           open={confirm === "send"}
-          onOpenChange={(open) => !open && setConfirm(null)}
+          onOpenChange={(open) => {
+            if (open) reloadSettings()  // the mode may have changed since this page loaded
+            if (!open) setConfirm(null)
+          }}
           title={alreadySent ? `Email ${c?.name} again?` : `Send to ${c?.email}?`}
           description={sendWarning(settings, c?.email)}
           confirmLabel={alreadySent ? "Send again" : "Send"}

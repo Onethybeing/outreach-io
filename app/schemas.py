@@ -248,6 +248,8 @@ class DraftEditIn(BaseModel):
 class BulkActionIn(BaseModel):
     dry_run: bool = True
     contact_ids: list[uuid.UUID] | None = None
+    # The mode the caller was shown. If it has changed since, the request is refused, not sent.
+    expected_mode: str | None = Field(None, pattern="^(dev|prod)$")
 
 
 class BulkActionOut(BaseModel):

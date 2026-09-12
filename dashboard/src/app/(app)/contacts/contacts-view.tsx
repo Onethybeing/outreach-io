@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, post, put, query } from "@/lib/api"
 import { fmtDate, humanize } from "@/lib/format"
-import type { BulkLookupOut, Contact, ContactView, Resume } from "@/lib/types"
+import type { AppSettings, BulkLookupOut, Contact, ContactView, Resume } from "@/lib/types"
 import { useAction } from "@/lib/use-action"
 import { useApi } from "@/lib/use-api"
 
@@ -53,7 +53,7 @@ function isBusy(c: Contact) {
 }
 
 export function ContactsView({ initialView, initialResumeId }: { initialView: ContactView; initialResumeId?: string }) {
-  const { can, settings } = useSession()
+  const { can, settings, reloadSettings } = useSession()
   const [view, setView] = useState(initialView)
   const [resumeId, setResumeId] = useState(initialResumeId ?? "all")
   const [selection, setSelection] = useState<RowSelectionState>({})
@@ -154,14 +154,21 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
           destructive: true,
           onConfirm: () => act(c, "erase", () => api(`/contacts/${c.id}`, { method: "DELETE" }), `${c.name} erased`),
         }),
-      send: (c: Contact) => {
+      send: async (c: Contact) => {
+        // Re-read the mode first: an admin may have switched it since this page loaded, and the
+        // confirmation must name the inbox the mail will actually reach.
+        const current = await run(`${c.id}:send`, () => api<AppSettings>("/settings"))
+        if (!current) return
+        reloadSettings()
         const again = SENT.includes(c.send_status)
+        const params = new URLSearchParams({ expected_mode: current.app_mode })
+        if (again) params.set("force", "true")
         ask({
           title: again ? `Email ${c.name} again?` : `Send the email to ${c.name}?`,
-          description: sendWarning(settings, c.email),
+          description: sendWarning(current, c.email),
           confirmLabel: again ? "Send again" : "Send",
-          destructive: settings.app_mode === "prod",
-          onConfirm: () => act(c, "send", () => post<Contact>(`/contacts/${c.id}/send${again ? "?force=true" : ""}`), sendSuccess),
+          destructive: current.app_mode === "prod",
+          onConfirm: () => act(c, "send", () => post<Contact>(`/contacts/${c.id}/send?${params}`), sendSuccess),
         })
       },
     }
@@ -361,6 +368,11 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
 
   async function bulk(kind: BulkKind) {
     const contactIds = ids.length ? ids : null
+    // Same reason as a single send: confirm against the mode as it is right now, not as it was loaded.
+    const current = kind === "send" ? await run("bulk:send", () => api<AppSettings>("/settings")) : settings
+    if (!current) return
+    if (kind === "send") reloadSettings()
+    const expected = kind === "send" ? current.app_mode : undefined
     const preview = await run(`bulk:${kind}`, () => post<BulkLookupOut>(BULK_PATHS[kind], { dry_run: true, contact_ids: contactIds }))
     if (!preview) return
     if (preview.eligible === 0) {
@@ -372,12 +384,12 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
     const copy = {
       lookup: { title: `Find emails for ${n} contact${n === 1 ? "" : "s"}?`, description: `${scope} will be looked up with ${humanize(preview.provider ?? settings.email_provider)}, in the background.`, confirmLabel: "Find emails" },
       drafts: { title: `Write ${n} draft${n === 1 ? "" : "s"}?`, description: `${scope}. You'll still review and approve each draft before anything is sent.`, confirmLabel: "Write drafts" },
-      send: { title: `Send ${n} approved email${n === 1 ? "" : "s"}?`, description: `${scope}. ${sendWarning(settings)}`, confirmLabel: "Send all", destructive: settings.app_mode === "prod" },
+      send: { title: `Send ${n} approved email${n === 1 ? "" : "s"}?`, description: `${scope}. ${sendWarning(current)}`, confirmLabel: "Send all", destructive: current.app_mode === "prod" },
     }[kind]
     ask({
       ...copy,
       onConfirm: async () => {
-        const queued = await run(`bulk:${kind}`, () => post(BULK_PATHS[kind], { dry_run: false, contact_ids: contactIds }), `Queued ${n}`)
+        const queued = await run(`bulk:${kind}`, () => post(BULK_PATHS[kind], { dry_run: false, contact_ids: contactIds, expected_mode: expected }), `Queued ${n}`)
         if (queued) {
           setSelection({})
           watchForAWhile()

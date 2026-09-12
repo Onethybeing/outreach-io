@@ -77,7 +77,7 @@ class SendStatus(str, enum.Enum):
     none = "none"
     queued = "queued"
     sent = "sent"
-    sent_dev = "sent_dev"  # dev-mode "send" — wrote .eml, never hit Gmail API
+    sent_dev = "sent_dev"  # really sent, but redirected to the operator's own inbox (dev mode)
     failed = "failed"
 
 
@@ -256,6 +256,9 @@ class Contact(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     gmail_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     gmail_thread_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # The MIME Message-ID, written before the send. If Gmail's reply is lost, a retry searches for
+    # this first, so a network failure can't turn into two emails to the same person.
+    rfc_message_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     reply_status: Mapped[ReplyStatus | None] = mapped_column(Enum(ReplyStatus), nullable=True)
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

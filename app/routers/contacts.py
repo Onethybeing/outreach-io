@@ -215,18 +215,23 @@ def generate_drafts_bulk(body: BulkActionIn, db: Session = Depends(get_db), user
 @contacts_router.post("/{contact_id}/send", response_model=ContactOut)
 def send_email(
     contact_id: uuid.UUID, force: bool = False,
+    expected_mode: str | None = Query(None, pattern="^(dev|prod)$"),
     db: Session = Depends(get_db), user: User = Depends(require("emails.send")),
 ):
-    sending.send(db, contact_id, user, force=force)
+    """expected_mode is what the caller was told the mode was; a mismatch is refused rather than sent."""
+    sending.send(db, contact_id, user, force=force, expected_mode=expected_mode)
     return contact_out(db, contact_id)
 
 
 @contacts_router.post("/send-approved", response_model=BulkActionOut)
 def send_approved_bulk(body: BulkActionIn, db: Session = Depends(get_db), user: User = Depends(require("emails.send"))):
     """Every contact with an approved draft that hasn't been sent. dry_run=true (default) only counts."""
+    mode = service.app_mode(db)
+    if body.expected_mode and body.expected_mode != mode:
+        raise service.ActionError(409, f"The sending mode is now '{mode}', not '{body.expected_mode}' — check who this would reach and try again")
     eligible = sending.bulk_eligible(db, body.contact_ids)
     if not body.dry_run and eligible:
-        sending.submit_bulk(eligible, user.id)
+        sending.submit_bulk(eligible, user.id, mode)
     return BulkActionOut(eligible=len(eligible), queued=not body.dry_run and bool(eligible))
 
 
