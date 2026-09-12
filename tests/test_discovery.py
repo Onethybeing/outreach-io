@@ -65,6 +65,7 @@ class FakeWorld:
         self.research_calls = 0
         self.kdms: dict | None = None  # set to override what find_kdms returns
         self.brief_override: dict | None = None
+        self.fail_searches: tuple[str, ...] = ()  # substrings of queries that should fail
 
     def search(self, db, query, max_results=5, include_domains=None, content_chars=400):
         self.searches.append(query)
@@ -78,6 +79,17 @@ class FakeWorld:
                     {"title": "Existing - Acme", "url": "https://www.linkedin.com/in/already-contact", "content": ""}]
         return [{"title": "Sam - advisor - Beta", "url": "https://www.linkedin.com/in/sam-founder", "content": ""},
                 {"title": "Lee - Head of Talent - Beta", "url": "https://www.linkedin.com/in/lee-talent", "content": ""}]
+
+    def search_many(self, db, queries, max_results=5, include_domains=None, content_chars=400):
+        """Same answers as `search`, in the batched shape the graph now calls. A query listed in
+        `fail_searches` comes back as an error in its own slot, as the real one does."""
+        out = []
+        for query in queries:
+            if any(marker in query for marker in self.fail_searches):
+                out.append(tavily.SearchError("Tavily usage limit reached (HTTP 432)"))
+            else:
+                out.append(self.search(db, query, max_results, include_domains, content_chars))
+        return out
 
     def complete_json(self, db, model, prompt, temperature, max_tokens=4096, **kwargs):
         name = kwargs["name"]
@@ -133,6 +145,7 @@ class FakeWorld:
 def world(monkeypatch):
     w = FakeWorld()
     monkeypatch.setattr(tavily, "search", w.search)
+    monkeypatch.setattr(tavily, "search_many", w.search_many)
     monkeypatch.setattr(llm, "complete_json", w.complete_json)
     return w
 
@@ -616,7 +629,7 @@ def test_llm_waits_on_rate_limit_then_succeeds(db, monkeypatch):
         httpx.Response(200, json={"choices": [{"message": {"content": '<think>hmm</think>{"ok": true}'}, "finish_reason": "stop"}],
                                   "usage": {"prompt_tokens": 10, "completion_tokens": 5}}),
     ])
-    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: next(responses))
+    monkeypatch.setattr(llm.httpclient, "post", lambda *a, **k: next(responses))
 
     tel = telemetry.RunTelemetry(on_notice=notices.append)
     with telemetry.activate(tel):
@@ -627,7 +640,7 @@ def test_llm_waits_on_rate_limit_then_succeeds(db, monkeypatch):
 
 def test_llm_truncated_output_is_an_error(db, monkeypatch):
     monkeypatch.setattr(vault, "get_credential", lambda db, provider: {"api_key": "k"})
-    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: httpx.Response(
+    monkeypatch.setattr(llm.httpclient, "post", lambda *a, **k: httpx.Response(
         200, json={"choices": [{"message": {"content": '{"a":'}, "finish_reason": "length"}], "usage": {}}))
     with pytest.raises(llm.LLMError, match="cut off"):
         llm.complete(db, "m", "x", 0, name="t")

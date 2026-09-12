@@ -161,20 +161,25 @@ def build(db: Session, days: int = 30, resume_id: uuid.UUID | None = None, inclu
     ).one()
     usage = {key: round(float(value or 0), 1) for key, value in zip(USAGE_KEYS, usage_row)}
     usage["brightdata_profiles"] = db.scalar(
-        select(func.count()).select_from(Contact).where(Contact.verification_source == "brightdata", Contact.verified_at >= since)
+        select(func.count()).select_from(Contact)
+        .where(Contact.verification_source == "brightdata", Contact.verified_at >= since, *contact_filter[1:])
     ) or 0
+    # contact_filter[1:] is the CV filter without its created_at bound: these two count by when the
+    # lookup or verification happened, but they must still honour the CV the caller asked about.
+    cv_filter = contact_filter[1:]
     lookups = db.execute(
         select(func.count(), func.count().filter(Contact.email_lookup_status == EmailLookupStatus.found))
         # Lookups that got an answer: a hit, a provider miss, or "not in your saved Apollo contacts"
         # (awaiting_user, a miss for this provider). Failed attempts (errors, plan limits, restarts)
         # aren't misses, and manual entry never changes this status.
         .where(Contact.email_looked_up_at >= since, Contact.email_lookup_status.in_(
-            [EmailLookupStatus.found, EmailLookupStatus.not_found, EmailLookupStatus.awaiting_user]))
+            [EmailLookupStatus.found, EmailLookupStatus.not_found, EmailLookupStatus.awaiting_user]),
+            *cv_filter)
     ).one()
     usage["email_lookup_hit_rate"] = rate(lookups[1], lookups[0])
     verifications = db.execute(
         select(func.count(), func.count().filter(Contact.verification_status == VerificationStatus.verified))
-        .where(Contact.verified_at >= since, Contact.verification_status != VerificationStatus.failed)
+        .where(Contact.verified_at >= since, Contact.verification_status != VerificationStatus.failed, *cv_filter)
     ).one()
     usage["verification_success_rate"] = rate(verifications[1], verifications[0])
 

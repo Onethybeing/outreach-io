@@ -26,6 +26,9 @@ export type AppSettings = {
 
 export type Resume = { id: string; filename: string; status: string; uploaded_at: string }
 
+export type HealthCheck = { name: string; status: "ok" | "warn" | "fail" | "off"; detail: string; hint: string | null }
+export type HealthReport = { status: string; checked_at: string; checks: HealthCheck[] }
+
 export type Run = {
   id: string
   resume_id: string

@@ -14,7 +14,16 @@ SAMPLE_PROFILE = (
     '{"name": "Priya Sharma", "current_role": "Machine Learning Engineer", "seniority": "mid", '
     '"years_experience": 4, "skills": ["Python", "PyTorch", "LLM fine-tuning", "RAG", "FastAPI"], '
     '"domains": ["AI infrastructure", "developer tools"], '
-    '"target_titles": ["ML Engineer", "Applied AI Engineer"]}'
+    '"target_titles": ["ML Engineer", "Applied AI Engineer"], '
+    '"experience": ['
+    '{"title": "ML Engineer", "organisation": "Dev-tools startup", "kind": "job", "period": "2024-2026", '
+    '"what": "Built the retrieval pipeline behind the in-product search", "tech": ["Python", "RAG"]}, '
+    '{"title": "Co-founder", "organisation": "Side venture", "kind": "founder", "period": "2023", '
+    '"what": "Ran a two-person analytics product to 40 paying users", "tech": ["Django"]}, '
+    '{"title": "Data Science Intern", "organisation": "Logistics firm", "kind": "internship", "period": "2022", '
+    '"what": "Forecasting models for delivery times", "tech": ["scikit-learn"]}], '
+    '"projects": [{"title": "Open-source vector store benchmark", "kind": "project", '
+    '"what": "Compared five vector databases on recall and latency", "tech": ["FAISS", "pgvector"]}]}'
 )
 
 
@@ -52,6 +61,12 @@ Return only a JSON object with these keys:
 - skills (list of strings, most relevant first, max 15)
 - domains (list of industries or problem areas the person has worked in)
 - target_titles (list of 2-4 job titles this person is a strong fit for next)
+- experience: every role in the resume, newest first, max 8. One object each:
+  {"title", "organisation", "kind", "period", "what", "tech"}
+  kind is one of "job", "internship", "freelance", "founder", "research", "volunteer".
+  "what" is one short line on what they built or did, in the resume's own words.
+  Include internships and part-time roles. Do not merge or skip roles, and do not rank them.
+- projects: personal, academic or open-source projects, max 6, same object shape with kind "project".
 
 Use only facts in the resume. If something is missing, use null or an empty list. Never guess.
 
@@ -233,7 +248,7 @@ Return only the JSON object.""",
             "contact_reason": "Co-founder and CTO, owns engineering hiring at this size.",
             "sender_name": "Priya Sharma",
         },
-        template="""Write a short cold email from a job candidate to a decision-maker at a startup.
+        template="""Write a short email asking about work at a startup, from someone looking for their next role.
 
 Candidate profile (JSON):
 {{ candidate_profile }}
@@ -245,18 +260,29 @@ Recipient: {{ contact_name }}{% if contact_title %}, {{ contact_title }}{% endif
 Researched notes on {{ startup_name }} (JSON, gathered from public sources):
 {{ startup_brief }}
 {% endif %}
-Rules:
-- 90 to 140 words. Plain text, no markdown, no emojis, no em dashes (write full stops or commas).
-- Open with one specific, true connection between the candidate's experience and {{ startup_name }}'s work.
-  Prefer something from the researched notes (their product, a recent development, or a listed
-  overlap) over a generic compliment. Use at most one such detail, and only if the notes state it.
-- Mention 1-2 concrete skills or results from the profile. Never invent achievements, numbers or companies.
-- Every claim must be stated in the profile or the notes as-is. Don't merge separate items into one
-  claim (e.g. a skill from one area applied to data from another domain) and don't imply experience
-  in the recipient's industry unless the profile lists it.
-- Don't flatter, don't restate their marketing back to them, and never claim to be a user or customer.
-- Say the resume is attached. End with one low-effort ask (a short call, or who to talk to).
-- Sign off as {{ sender_name or "the candidate" }}.
+First, pick the evidence:
+- Go through `experience` and `projects` and choose the ONE item closest to what {{ startup_name }}
+  actually builds. Judge it on the work itself: the problem, the tech, the domain.
+- Judge on relevance only. A job, an internship, a university or open-source project and a founder
+  role all count equally, so pick an internship or a project over a founder role whenever it is the
+  closer match. Never lead with a founder or business role just because it sounds more senior.
+- That item carries the email: name it, say what they built or did with it, and connect it to the
+  recipient's work. Give it roughly half the body.
+- Then at most one supporting line: a second item, or 1-2 skills from the profile.
+
+Then write it:
+- 90 to 150 words. Plain text, no markdown, no emojis, no em dashes (write full stops or commas).
+- Be plain about why you are writing: you are interested in working there and want to know whether
+  there is a role, or will be one. Ask once, near the end, and keep it easy to answer (a short call,
+  or who to speak to). Do not demand an interview and do not apologise for writing.
+- One specific, true detail about {{ startup_name }} from the notes, at most, to show this is not a
+  mass email. Only if the notes state it.
+- Every claim must appear in the profile or the notes as-is. Never invent achievements, numbers,
+  employers or dates. Don't merge two separate items into one claim (a skill from one role applied
+  to data from another), and don't imply experience in the recipient's industry unless it is listed.
+- Don't flatter, don't restate their marketing back to them, don't call yourself passionate or a
+  perfect fit, and never claim to be a user or customer.
+- Say the resume is attached. Sign off as {{ sender_name or "the candidate" }}.
 
 Return only a JSON object: {"subject": "under 8 words", "body": "the email"}""",
         model=HEAVY_MODEL,

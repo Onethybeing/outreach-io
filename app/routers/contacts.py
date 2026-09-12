@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import require
 from app.contacts import drafts, sending, service, verification
+from app.health import run_checks
 from app.db import get_db
 from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
@@ -259,6 +260,12 @@ def read_settings(db: Session = Depends(get_db), _: User = Depends(require("dash
         email_provider=service.email_provider(db),
         email_providers=sorted(service.EMAIL_PROVIDERS),
     )
+
+
+@settings_router.get("/health")
+def settings_health(db: Session = Depends(get_db), _: User = Depends(require("vault.manage"))) -> dict:
+    """Admin-only: the checks call each provider, and the results name what is configured."""
+    return run_checks(db)
 
 
 @settings_router.put("/mode", response_model=SettingsOut)

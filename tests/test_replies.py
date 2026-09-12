@@ -72,6 +72,14 @@ def inbox(monkeypatch):
     monkeypatch.setattr(gmail, "get_message", lambda db, mid: state["messages"][mid])
     monkeypatch.setattr(llm, "complete_json", fake_llm)
     monkeypatch.setattr(vault, "get_credential", lambda db, provider: {"sender_address": SENDER})
+
+    # poll_all polls every trackable contact in the database, which includes any real ones. Narrow
+    # it to this test's own contacts so the counts describe the fixture, not whatever else is there.
+    real = tracker.trackable_contacts
+    monkeypatch.setattr(
+        tracker, "trackable_contacts",
+        lambda db: [c for c in real(db) if (c.email or "").endswith("@acme.example")],
+    )
     return state
 
 

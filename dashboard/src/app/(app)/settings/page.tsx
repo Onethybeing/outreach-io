@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 import { AuditTab } from "./audit-tab"
 import { GeneralTab } from "./general-tab"
+import { HealthTab } from "./health-tab"
 import { PromptsTab } from "./prompts-tab"
 import { UsersTab } from "./users-tab"
 import { VaultTab } from "./vault-tab"
@@ -14,6 +15,7 @@ export default function SettingsPage() {
   const { can } = useSession()
   const tabs = [
     { value: "general", label: "General", show: true, content: <GeneralTab /> },
+    { value: "health", label: "Health", show: can("vault.manage"), content: <HealthTab /> },
     { value: "vault", label: "API vault", show: can("vault.manage"), content: <VaultTab /> },
     { value: "prompts", label: "Prompts", show: can("prompts.view"), content: <PromptsTab /> },
     { value: "users", label: "Users", show: can("users.manage"), content: <UsersTab /> },

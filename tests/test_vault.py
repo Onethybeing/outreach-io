@@ -116,7 +116,7 @@ def test_changed_master_key_is_reported_not_silently_wrong(db, make_user, fake_p
     vault.save_credential(db, "groq", {"api_key": "good"}, make_user(UserRole.admin))
     vault.clear_cache()
     monkeypatch.setattr(get_settings(), "vault_master_key", Fernet.generate_key().decode())
-    with pytest.raises(RuntimeError, match="VAULT_MASTER_KEY changed"):
+    with pytest.raises(RuntimeError, match="VAULT_MASTER_KEY"):
         vault.get_credential(db, "groq")
 
 

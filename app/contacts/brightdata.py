@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import httpx
 from sqlalchemy.orm import Session
 
-from app import telemetry, vault
+from app import httpclient, telemetry, vault
 from app.discovery.normalize import linkedin_company_slug
 
 BASE = "https://api.brightdata.com/datasets/v3"
@@ -58,7 +58,7 @@ def scrape_profile(db: Session, linkedin_url: str) -> Profile:
     headers = {"Authorization": f"Bearer {vault.get_credential(db, 'brightdata')['api_key']}"}
     with telemetry.observation("brightdata_profile", as_type="tool", input={"url": linkedin_url}) as obs:
         try:
-            trigger = httpx.post(
+            trigger = httpclient.post(
                 f"{BASE}/trigger", headers=headers, params={"dataset_id": PEOPLE_DATASET, "format": "json"},
                 json=[{"url": linkedin_url}], timeout=60,
             )
@@ -70,7 +70,7 @@ def scrape_profile(db: Session, linkedin_url: str) -> Profile:
             waited = 0
             while True:
                 telemetry.heartbeat()
-                progress = httpx.get(f"{BASE}/progress/{snapshot_id}", headers=headers, timeout=60)
+                progress = httpclient.get(f"{BASE}/progress/{snapshot_id}", headers=headers, timeout=60)
                 _check(progress, "progress check")
                 status = progress.json().get("status")
                 if status == "ready":
@@ -82,7 +82,7 @@ def scrape_profile(db: Session, linkedin_url: str) -> Profile:
                 time.sleep(POLL_SECONDS)
                 waited += POLL_SECONDS
 
-            download = httpx.get(f"{BASE}/snapshot/{snapshot_id}", headers=headers, params={"format": "json"}, timeout=120)
+            download = httpclient.get(f"{BASE}/snapshot/{snapshot_id}", headers=headers, params={"format": "json"}, timeout=120)
             _check(download, "download")
         except httpx.HTTPError as exc:
             raise ProfileError(f"Could not reach BrightData: {type(exc).__name__}")

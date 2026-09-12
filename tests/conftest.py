@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app import vault
+from app import httpclient, vault
 from app.auth import SESSION_COOKIE, sign_session
 from app.config import get_settings
 from app.db import engine, get_db
@@ -32,6 +32,22 @@ def test_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
     vault.clear_cache()
     yield
     get_storage.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Any provider call a test forgot to fake fails loudly instead of reaching the internet.
+
+    Tests patch `httpclient.get`/`post`, so a real request only happens when a patch is missing or
+    points at the wrong place. That used to look like a puzzling assertion failure (or a real
+    charge); now it names itself.
+    """
+
+    def blocked(url: str, **_: object) -> None:
+        raise AssertionError(f"This test tried to call {url} for real. Patch httpclient.get/post.")
+
+    monkeypatch.setattr(httpclient, "get", blocked)
+    monkeypatch.setattr(httpclient, "post", blocked)
 
 
 @pytest.fixture

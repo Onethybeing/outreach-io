@@ -3,13 +3,13 @@
 import uuid
 from urllib.parse import urlencode
 
-import httpx
 from fastapi import Depends, HTTPException, Request, status
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.orm import Session
 
+from app import httpclient
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.models import User
@@ -114,7 +114,7 @@ def google_authorize_url(state: str, nonce: str) -> str:
 def exchange_code_for_claims(code: str, expected_nonce: str) -> dict:
     """Swap the auth code for an ID token and return its verified claims."""
     settings = get_settings()
-    response = httpx.post(
+    response = httpclient.post(
         GOOGLE_TOKEN_URL,
         data={
             "code": code,
