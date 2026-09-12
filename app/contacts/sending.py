@@ -19,11 +19,10 @@ from app.contacts.service import SENT, ActionError
 from app.db import SessionLocal
 from app.jobs import WorkerPool
 from app.models import Contact, DraftStatus, EmailDirection, EmailEvent, Resume, SendStatus, User
-from app.storage import get_storage
+from app.storage import OUTBOX_PREFIX, get_storage
 
 logger = logging.getLogger(__name__)
 
-OUTBOX_PREFIX = "outbox"  # storage key prefix: storage/outbox/ locally, gs://<bucket>/outbox/ on Cloud Run
 READY = (SendStatus.none, SendStatus.failed)
 
 

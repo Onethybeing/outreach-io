@@ -17,6 +17,7 @@ OPERATOR = VIEWER | {
 
 ADMIN = OPERATOR | {
     "resumes.delete",
+    "contacts.delete",  # erase a person's record on request (privacy policy)
     "mode.toggle",
     "vault.manage",
     "prompts.edit",

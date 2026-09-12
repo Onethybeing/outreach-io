@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import evals, llm, prompts, telemetry, vault
+from app import evals, llm, prompts, suppression, telemetry, vault
 from app.models import Contact, EmailDirection, EmailEvent, ReplyClassification, ReplyStatus, SendStatus
 from app.replies import gmail
 
@@ -140,6 +140,9 @@ def poll_contact(db: Session, contact: Contact, sender_address: str, summary: Po
         summary.by_label[key] = summary.by_label.get(key, 0) + 1
         if label is not None:
             labels.append(label)
+    if ReplyClassification.unsubscribe in labels:
+        # Outlives this contact row, so erasing them later can't undo the unsubscribe.
+        suppression.suppress(db, contact.linkedin_url, "unsubscribe")
     db.commit()
     for label in labels:
         evals.safe_signal(evals.record_reply, db, contact, label)

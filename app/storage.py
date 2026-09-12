@@ -16,11 +16,15 @@ class StorageError(Exception):
     pass
 
 
+OUTBOX_PREFIX = "outbox"  # storage/outbox/ locally, gs://<bucket>/outbox/ on Cloud Run
+
+
 class Storage(Protocol):
     def save(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str: ...
     def read(self, key: str) -> bytes: ...
     def exists(self, key: str) -> bool: ...
     def delete(self, key: str) -> None: ...
+    def list_keys(self, prefix: str) -> list[str]: ...
 
 
 class LocalStorage:
@@ -51,6 +55,13 @@ class LocalStorage:
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
 
+    def list_keys(self, prefix: str) -> list[str]:
+        folder = self.root / prefix
+        if not folder.is_dir():
+            return []
+        # Recursive, to match GCS: a prefix listing there returns keys in "subdirectories" too.
+        return sorted(path.relative_to(self.root).as_posix() for path in folder.rglob("*") if path.is_file())
+
 
 class GCSStorage:
     def __init__(self, bucket_name: str) -> None:
@@ -75,6 +86,9 @@ class GCSStorage:
         blob = self.bucket.blob(key)
         if blob.exists():
             blob.delete()
+
+    def list_keys(self, prefix: str) -> list[str]:
+        return sorted(blob.name for blob in self.bucket.list_blobs(prefix=f"{prefix}/"))
 
 
 @lru_cache

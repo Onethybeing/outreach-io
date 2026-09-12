@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app import llm, prompts, telemetry, vault
+from app import llm, prompts, suppression, telemetry, vault
 from app.config import get_settings
 from app.models import (
     Contact, EmailEvent, ReplyClassification, ReplyStatus, Resume, Run, RunStatus, SendStatus, Startup, UserRole,
@@ -148,6 +148,8 @@ def test_unsubscribe_sets_do_not_contact(db, sent_contact, inbox):
     tracker.poll_all(db)
     db.refresh(sent_contact)
     assert sent_contact.do_not_contact is True and sent_contact.reply_status == ReplyStatus.replied
+    # Recorded separately too, so erasing the contact later can't undo the unsubscribe.
+    assert suppression.is_suppressed(db, sent_contact.linkedin_url)
 
 
 def test_out_of_office_keeps_waiting(db, sent_contact, inbox):

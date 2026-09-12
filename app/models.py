@@ -268,7 +268,11 @@ class Contact(Base):
     )
 
     startup: Mapped["Startup"] = relationship(back_populates="contacts")
-    email_events: Mapped[list["EmailEvent"]] = relationship(back_populates="contact")
+    # delete-orphan: email_events.contact_id is NOT NULL, so the default "nullify on parent delete"
+    # would break erasing a contact whose events happen to be loaded in the session.
+    email_events: Mapped[list["EmailEvent"]] = relationship(
+        back_populates="contact", cascade="all, delete-orphan"
+    )
 
 
 class EmailEvent(Base):
@@ -396,6 +400,22 @@ class RunEvent(Base):
     message: Mapped[str] = mapped_column(Text)
     data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ContactSuppression(Base):
+    """"Never contact this person" — outlives the contact row, so erasing can't undo an opt-out.
+
+    Only a hash of the LinkedIn URL is stored: enough to recognise them in a later run, not enough
+    to identify them (app/suppression.py).
+    """
+
+    __tablename__ = "contact_suppressions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    linkedin_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    reason: Mapped[str] = mapped_column(String(32))  # unsubscribe | do_not_contact | erased
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class AuditLog(Base):

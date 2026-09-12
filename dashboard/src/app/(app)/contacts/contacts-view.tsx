@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { post, query } from "@/lib/api"
+import { api, post, put, query } from "@/lib/api"
 import { fmtDate, humanize } from "@/lib/format"
 import type { BulkLookupOut, Contact, ContactView, Resume } from "@/lib/types"
 import { useAction } from "@/lib/use-action"
@@ -135,6 +135,26 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
           onConfirm: go,
         })
       },
+      doNotContact: (c: Contact) => {
+        const next = !c.do_not_contact
+        const go = () =>
+          act(c, "dnc", () => put<Contact>(`/contacts/${c.id}/do-not-contact`, { do_not_contact: next }), next ? `${c.name} won't be emailed again` : `${c.name} can be emailed again`)
+        if (!next) return void go()
+        ask({
+          title: `Mark ${c.name} as do not contact?`,
+          description: "No further email goes to them. You can undo this from the same menu.",
+          confirmLabel: "Mark",
+          onConfirm: go,
+        })
+      },
+      erase: (c: Contact) =>
+        ask({
+          title: `Erase ${c.name}?`,
+          description: "For a deletion request: removes this person's record and email history for good. The run they came from keeps its candidate row, without the link.",
+          confirmLabel: "Erase",
+          destructive: true,
+          onConfirm: () => act(c, "erase", () => api(`/contacts/${c.id}`, { method: "DELETE" }), `${c.name} erased`),
+        }),
       send: (c: Contact) => {
         const again = SENT.includes(c.send_status)
         ask({
@@ -316,6 +336,19 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
                       {SENT.includes(c.send_status) ? "Send again" : "Send"}
                     </DropdownMenuItem>
                   </>
+                )}
+                {can("contacts.act") && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => actions.doNotContact(c)} disabled={isBusy(c)}>
+                      {c.do_not_contact ? "Allow contact again" : "Mark do not contact"}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {can("contacts.delete") && (
+                  <DropdownMenuItem className="text-destructive" onSelect={() => actions.erase(c)} disabled={isBusy(c)}>
+                    Erase this person…
+                  </DropdownMenuItem>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>

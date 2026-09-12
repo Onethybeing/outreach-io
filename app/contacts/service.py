@@ -5,18 +5,19 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, select, true
+from sqlalchemy import and_, delete, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, evals
+from app import audit, evals, suppression
 from app.contacts import apollo
 from app.db import SessionLocal
 from app.jobs import WorkerPool
 from app.models import (
-    AppSetting, Candidate, CandidateStatus, Contact, DraftStatus, EmailLookupStatus, Run, RunStatus,
-    SendStatus, Startup, User, VerificationStatus,
+    AppSetting, Candidate, CandidateStatus, Contact, DraftStatus, EmailEvent, EmailLookupStatus, Run,
+    RunStatus, SendStatus, Startup, User, VerificationStatus,
 )
+from app.storage import OUTBOX_PREFIX, get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,13 @@ def _decide(candidate: Candidate, status: CandidateStatus, user: User, contact: 
 
 def approve(db: Session, candidate_id: uuid.UUID, user: User) -> Contact:
     candidate, run = _pending_candidate(db, candidate_id)
+    if suppression.is_suppressed(db, candidate.linkedin_url):
+        # They unsubscribed, were marked do-not-contact, or asked to be erased. Never contact again.
+        _decide(candidate, CandidateStatus.rejected, user, None)
+        audit.record(db, user, "candidates.reject", "candidate", candidate.id, {"reason": "suppressed"})
+        db.commit()
+        evals.safe_signal(evals.record_candidate_decision, db, candidate, False)  # as any other rejection
+        raise ActionError(409, "This person asked not to be contacted — the candidate was rejected")
     if _existing_contact(db, candidate) is not None:
         db.commit()
         raise ActionError(409, "This person is already a contact — choose Reuse or Update instead")
@@ -248,6 +256,88 @@ def set_manual_email(db: Session, contact_id: uuid.UUID, email: str, user: User)
     audit.record(db, user, "contacts.manual_email", "contact", contact.id)
     db.commit()
     return contact
+
+
+# --- do-not-contact and erasure -------------------------------------------------------
+# The privacy policy promises both: someone can ask not to be emailed, or to have their record removed.
+
+def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: User) -> Contact:
+    contact = _contact(db, contact_id, lock=True)
+    # A lookup or send in flight already passed its do_not_contact check and would finish anyway.
+    if contact.email_lookup_status == EmailLookupStatus.running:
+        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+    if contact.send_status == SendStatus.queued:
+        raise ActionError(409, "An email is being sent to this contact — try again when it finishes")
+    contact.do_not_contact = value
+    if value:
+        # Kept even if the contact is later erased, so a new run can't quietly re-add them.
+        suppression.suppress(db, contact.linkedin_url, "do_not_contact", user)
+    else:
+        # Undoing has to lift the block too, or approving them later would still be refused.
+        suppression.unsuppress(db, contact.linkedin_url)
+    audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
+    db.commit()
+    return contact
+
+
+def erase_contact(db: Session, contact_id: uuid.UUID, user: User) -> None:
+    """Delete the person's record and their email history.
+
+    Candidates that led to this contact stay (they belong to a run) but lose the link, so no row
+    points at a deleted person. The audit entry deliberately keeps no name or address.
+    """
+    contact = _contact(db, contact_id, lock=True)
+    if contact.email_lookup_status == EmailLookupStatus.running:
+        raise ActionError(409, "An email lookup is running for this contact — try again when it finishes")
+    if contact.verification_status in (VerificationStatus.queued, VerificationStatus.running):
+        raise ActionError(409, "This contact is being verified right now — try again when it finishes")
+    if contact.send_status == SendStatus.queued:
+        raise ActionError(409, "An email is being sent to this contact — try again when it finishes")
+
+    # Erasing must not undo an opt-out: remember the hash before the row (and its flag) disappear.
+    suppression.suppress(db, contact.linkedin_url, "erased", user)
+
+    db.execute(delete(EmailEvent).where(EmailEvent.contact_id == contact.id))
+    db.execute(
+        update(Candidate).where(Candidate.contact_id == contact.id).values(contact_id=None)
+    )
+    db.execute(
+        update(Candidate).where(Candidate.existing_contact_id == contact.id).values(existing_contact_id=None)
+    )
+    db.execute(
+        update(Contact).where(Contact.is_duplicate_of_contact_id == contact.id).values(is_duplicate_of_contact_id=None)
+    )
+    # The candidate rows that proposed this person hold their name and profile URL too; scrub them
+    # rather than delete, because a run's candidate count and decisions have to stay consistent.
+    for candidate in db.scalars(select(Candidate).where(Candidate.linkedin_url == contact.linkedin_url)):
+        candidate.name, candidate.title, candidate.reason = "(erased)", None, None
+        candidate.linkedin_url = f"erased:{candidate.id}"
+        candidate.contact_id = candidate.existing_contact_id = None
+
+    details = {"had_email": bool(contact.email), "was_sent": contact.send_status in SENT}  # read before the delete
+    db.delete(contact)
+    audit.record(db, user, "contacts.erase", "contact", contact_id, details)
+    db.commit()
+    _delete_outbox_files(db, contact_id, user)
+
+
+def _delete_outbox_files(db: Session, contact_id: uuid.UUID, user: User) -> None:
+    """Dev-mode sends leave an .eml holding the address and the message; erasure must take those too.
+
+    Runs after the commit, so a rolled-back erasure can't destroy files. If it fails, the files are
+    orphaned with nothing in the database pointing at them, so the failure is audit-logged: the entry
+    plus the key suffix below is what a manual sweep needs.
+    """
+    storage = get_storage()
+    try:
+        suffix = f"-{contact_id}.eml"  # outbox/<timestamp>-<contact id>.eml, written by sending.send
+        for key in storage.list_keys(OUTBOX_PREFIX):
+            if key.endswith(suffix):
+                storage.delete(key)
+    except Exception as exc:  # noqa: BLE001 — the rows are already gone; a storage hiccup must be recorded, not fatal
+        logger.exception("Could not remove outbox files for erased contact %s", contact_id)
+        audit.record(db, user, "contacts.erase_files_failed", "contact", contact_id, {"error": str(exc)})
+        db.commit()
 
 
 def bulk_lookup_eligible(db: Session, contact_ids: list[uuid.UUID] | None = None) -> list[uuid.UUID]:
