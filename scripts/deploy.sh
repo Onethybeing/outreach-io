@@ -40,7 +40,10 @@ else
   exit 1
 fi
 URL="$(gcloud run services describe "$SERVICE" --region="$REGION" "${GC[@]}" --format='value(status.url)' 2>/dev/null || true)"
-ENV_VARS="APP_MODE=dev,STORAGE_BACKEND=gcs,GCS_BUCKET=${BUCKET},AUTO_EVALS=true"
+# APP_MODE only seeds the runtime setting (admins toggle the mode in Settings). DEV_REDIRECT_EMAIL is
+# where every dev-mode email goes instead of the contact — it is the safety net, so it must be set.
+DEV_REDIRECT_EMAIL="${DEV_REDIRECT_EMAIL:-onethybeing@gmail.com}"
+ENV_VARS="APP_MODE=dev,STORAGE_BACKEND=gcs,GCS_BUCKET=${BUCKET},AUTO_EVALS=true,DEV_REDIRECT_EMAIL=${DEV_REDIRECT_EMAIL}"
 if [[ -n "$DASHBOARD_URL" ]]; then
   ENV_VARS+=",PUBLIC_BASE_URL=${DASHBOARD_URL},POST_LOGIN_REDIRECT=/"
 elif [[ -n "$URL" ]]; then

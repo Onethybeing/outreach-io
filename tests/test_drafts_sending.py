@@ -1,6 +1,7 @@
 import email
 import email.policy
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -9,8 +10,8 @@ from app import llm, prompts, telemetry
 from app.config import get_settings
 from app.contacts import sending
 from app.models import (
-    AuditLog, Contact, DraftStatus, EmailEvent, EmailLookupStatus, Resume, Run, RunStatus, SendStatus,
-    Startup, UserRole, VerificationStatus,
+    AppSetting, AuditLog, Contact, DraftStatus, EmailEvent, EmailLookupStatus, Resume, Run, RunStatus,
+    SendStatus, Startup, UserRole, VerificationStatus,
 )
 
 
@@ -21,9 +22,26 @@ def no_tracing(monkeypatch):
 
 @pytest.fixture
 def outbox(tmp_path, monkeypatch):
-    # conftest points local storage at tmp_path, so dev sends land in tmp_path/outbox.
+    """Stands in for Gmail: records what would have been sent, so no test reaches the network.
+
+    conftest points local storage at tmp_path, so the archived copies land in tmp_path/outbox.
+    """
+    sent = []
+
+    def fake_send(db, raw):
+        sent.append(email.message_from_bytes(raw, policy=email.policy.default))
+        return f"gmail-{len(sent)}", "thread-1"
+
     monkeypatch.setattr(sending, "sender_address", lambda db: "priya@example.com")
-    return tmp_path / sending.OUTBOX_PREFIX
+    monkeypatch.setattr(sending.gmail, "send_message", fake_send)
+    monkeypatch.setattr(get_settings(), "dev_redirect_email", "ops@example.com")
+    directory = tmp_path / sending.OUTBOX_PREFIX
+    return SimpleNamespace(messages=sent, dir=directory, files=lambda: sorted(directory.glob("*.eml")))
+
+
+def _use_prod(db):
+    db.add(AppSetting(key="app_mode", value="prod"))
+    db.commit()
 
 
 @pytest.fixture
@@ -145,26 +163,106 @@ def _approved(db, operator, contact):
     assert operator.post(f"/contacts/{contact.id}/draft/approve").status_code == 200
 
 
-def test_dev_send_writes_eml_with_cv_attached(db, contact, operator, llm_answer, outbox):
+def test_dev_send_goes_to_the_operator_never_the_contact(db, contact, operator, llm_answer, outbox):
     _approved(db, operator, contact)
     body = operator.post(f"/contacts/{contact.id}/send").json()
-    assert body["send_status"] == "sent_dev" and body["mail_service"] == "dev_eml" and body["sent_at"]
+    assert body["send_status"] == "sent_dev" and body["mail_service"] == "gmail_dev" and body["sent_at"]
 
-    files = list(outbox.glob("*.eml"))
-    assert len(files) == 1
-    message = email.message_from_bytes(files[0].read_bytes(), policy=email.policy.default)
-    assert message["To"] == "jane@acmevector.example" and message["From"] == "priya@example.com"
-    assert message["Subject"] == "RAG engineer for Acme"
-    assert "I build RAG pipelines" in message.get_body(("plain",)).get_content()
+    assert len(outbox.messages) == 1
+    message = outbox.messages[0]
+    # The whole point: a real email was sent, and it went to us, not to Jane.
+    assert message["To"] == "ops@example.com" and message["From"] == "priya@example.com"
+    assert message["X-Outreach-Intended-To"] == "jane@acmevector.example"
+    assert message["Subject"] == "[DEV → jane@acmevector.example] RAG engineer for Acme"
+    text = message.get_body(("plain",)).get_content()
+    assert "DEV MODE" in text and "They received nothing" in text and "I build RAG pipelines" in text
     attachments = list(message.iter_attachments())
     assert [a.get_filename() for a in attachments] == ["priya_cv.pdf"]
     assert attachments[0].get_content() == b"%PDF-1.4 fake cv bytes"
 
     event = db.scalar(select(EmailEvent).where(EmailEvent.contact_id == contact.id))
-    assert event.gmail_message_id == message["Message-ID"]
+    assert event.gmail_message_id == "gmail-1"
     assert db.scalar(select(AuditLog).where(AuditLog.action == "emails.send", AuditLog.target_id == str(contact.id))) is not None
     assert str(contact.id) in {c["id"] for c in operator.get("/contacts?view=sent").json()}
     assert len(operator.get(f"/contacts/{contact.id}/emails").json()) == 1
+    assert len(outbox.files()) == 1  # archived copy of exactly what was sent
+
+
+def test_prod_mode_sends_to_the_contact(db, contact, operator, llm_answer, outbox):
+    _approved(db, operator, contact)
+    _use_prod(db)
+    body = operator.post(f"/contacts/{contact.id}/send").json()
+    assert body["send_status"] == "sent" and body["mail_service"] == "gmail"
+    message = outbox.messages[0]
+    assert message["To"] == "jane@acmevector.example"
+    assert message["Subject"] == "RAG engineer for Acme"  # no DEV prefix, no banner
+    assert "DEV MODE" not in message.get_body(("plain",)).get_content()
+
+
+def test_dev_redirect_falls_back_to_the_sending_account(db, contact, operator, llm_answer, outbox, monkeypatch):
+    monkeypatch.setattr(get_settings(), "dev_redirect_email", "")
+    _approved(db, operator, contact)
+    operator.post(f"/contacts/{contact.id}/send")
+    assert outbox.messages[0]["To"] == "priya@example.com"
+
+
+def test_mode_toggle_is_admin_only_and_changes_where_mail_goes(db, contact, operator, llm_answer, outbox, make_user, login):
+    assert operator.put("/settings/mode", json={"mode": "prod"}).status_code == 403
+    admin = login(make_user(UserRole.admin))
+    settings = admin.put("/settings/mode", json={"mode": "prod"}).json()
+    assert settings["app_mode"] == "prod" and settings["dev_redirect_email"] is None
+
+    _approved(db, operator, contact)
+    operator.post(f"/contacts/{contact.id}/send")
+    assert outbox.messages[0]["To"] == "jane@acmevector.example"
+
+    back = admin.put("/settings/mode", json={"mode": "dev"}).json()
+    assert back["app_mode"] == "dev" and back["dev_redirect_email"] == "ops@example.com"
+
+
+def test_a_failed_send_is_not_recorded_as_sent(db, contact, operator, llm_answer, outbox, monkeypatch):
+    _approved(db, operator, contact)
+    monkeypatch.setattr(sending.gmail, "send_message", _raise(sending.gmail.GmailError("rate limited")))
+    response = operator.post(f"/contacts/{contact.id}/send")
+    assert response.status_code == 502 and "rate limited" in response.json()["detail"]
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.failed and contact.sent_at is None
+    assert db.scalar(select(EmailEvent).where(EmailEvent.contact_id == contact.id)) is None
+
+
+def test_a_lost_response_is_reconciled_instead_of_sent_twice(db, contact, operator, llm_answer, outbox, monkeypatch):
+    """Gmail accepted the message but the reply never arrived: retrying must not email them again."""
+    _approved(db, operator, contact)
+    monkeypatch.setattr(sending.gmail, "send_message", _raise(sending.gmail.GmailError("Could not reach Gmail: ReadTimeout")))
+    assert operator.post(f"/contacts/{contact.id}/send").status_code == 502
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.failed and contact.rfc_message_id
+
+    # It had in fact gone out — the next attempt finds it and records it rather than resending.
+    monkeypatch.setattr(sending.gmail, "find_by_rfc_message_id", lambda db_, mid: ("gmail-lost", "thread-lost"))
+    retry = operator.post(f"/contacts/{contact.id}/send")
+    assert retry.status_code == 409 and "already been sent" in retry.json()["detail"]
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.sent_dev and contact.gmail_message_id == "gmail-lost"
+    assert outbox.messages == []  # nothing was sent a second time
+
+
+def test_send_refuses_when_the_mode_changed_under_the_operator(db, contact, operator, llm_answer, outbox):
+    _approved(db, operator, contact)
+    _use_prod(db)
+    # The dashboard was showing dev; the admin switched to prod in the meantime.
+    response = operator.post(f"/contacts/{contact.id}/send?expected_mode=dev")
+    assert response.status_code == 409 and "now 'prod'" in response.json()["detail"]
+    assert outbox.messages == []
+    db.refresh(contact)
+    assert contact.send_status == SendStatus.none
+
+
+def _raise(exc):
+    def fail(*args, **kwargs):
+        raise exc
+
+    return fail
 
 
 def test_resend_needs_force(db, contact, operator, llm_answer, outbox):
@@ -173,23 +271,14 @@ def test_resend_needs_force(db, contact, operator, llm_answer, outbox):
     again = operator.post(f"/contacts/{contact.id}/send")
     assert again.status_code == 409 and "force" in again.json()["detail"]
     assert operator.post(f"/contacts/{contact.id}/send?force=true").status_code == 200
-    assert len(list(outbox.glob("*.eml"))) == 2
+    assert len(outbox.messages) == 2
 
 
 def test_send_requires_approved_draft(db, contact, operator, llm_answer, outbox):
     _generate(operator, contact)
     response = operator.post(f"/contacts/{contact.id}/send")
     assert response.status_code == 409 and "Approve" in response.json()["detail"]
-    assert not outbox.exists()
-
-
-def test_prod_mode_never_sends(db, contact, operator, llm_answer, outbox, monkeypatch):
-    _approved(db, operator, contact)
-    monkeypatch.setattr(get_settings(), "app_mode", "prod")
-    response = operator.post(f"/contacts/{contact.id}/send")
-    assert response.status_code == 409 and "Real sending is off" in response.json()["detail"]
-    db.refresh(contact)
-    assert contact.send_status == SendStatus.none and not outbox.exists()
+    assert outbox.messages == []
 
 
 def test_missing_cv_file_blocks_send_without_side_effects(db, contact, operator, llm_answer, outbox):

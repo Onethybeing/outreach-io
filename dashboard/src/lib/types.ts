@@ -16,7 +16,13 @@ export type User = {
 
 export type Me = User & { permissions: string[] }
 
-export type AppSettings = { app_mode: string; email_provider: string; email_providers: string[] }
+export type AppSettings = {
+  app_mode: string
+  /** Where dev-mode email actually goes; null in prod, where it goes to the contacts themselves. */
+  dev_redirect_email: string | null
+  email_provider: string
+  email_providers: string[]
+}
 
 export type Resume = { id: string; filename: string; status: string; uploaded_at: string }
 

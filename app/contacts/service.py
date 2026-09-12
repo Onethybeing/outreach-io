@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, evals, suppression
+from app.config import get_settings
 from app.contacts import apollo
 from app.db import SessionLocal
 from app.jobs import WorkerPool
@@ -177,6 +178,31 @@ def _contact(db: Session, contact_id: uuid.UUID, lock: bool = False) -> Contact:
     return contact
 
 
+APP_MODES = ("dev", "prod")
+
+
+def app_mode(db: Session) -> str:
+    """Runtime sending mode. Admins toggle it in Settings; APP_MODE only sets the starting value."""
+    setting = db.get(AppSetting, "app_mode")
+    if setting and setting.value in APP_MODES:
+        return setting.value
+    return get_settings().app_mode if get_settings().app_mode in APP_MODES else "dev"
+
+
+def set_app_mode(db: Session, mode: str, user: User) -> str:
+    if mode not in APP_MODES:
+        raise ActionError(400, f"Unknown mode '{mode}'. Available: {', '.join(APP_MODES)}")
+    setting = db.get(AppSetting, "app_mode")
+    if setting is None:
+        db.add(AppSetting(key="app_mode", value=mode))
+    else:
+        setting.value = mode
+    # Deliberately loud in the audit log: this is what decides whether strangers receive email.
+    audit.record(db, user, "settings.app_mode", "setting", "app_mode", {"value": mode})
+    db.commit()
+    return mode
+
+
 def email_provider(db: Session) -> str:
     setting = db.get(AppSetting, "email_provider")
     return setting.value if setting and setting.value in EMAIL_PROVIDERS else DEFAULT_EMAIL_PROVIDER
@@ -273,8 +299,11 @@ def set_do_not_contact(db: Session, contact_id: uuid.UUID, value: bool, user: Us
         # Kept even if the contact is later erased, so a new run can't quietly re-add them.
         suppression.suppress(db, contact.linkedin_url, "do_not_contact", user)
     else:
-        # Undoing has to lift the block too, or approving them later would still be refused.
+        # Undoing lifts an operator's own block, so approving them later isn't refused. An
+        # unsubscribe the person sent themselves stays, and keeps do_not_contact on with it.
         suppression.unsuppress(db, contact.linkedin_url)
+        if suppression.is_suppressed(db, contact.linkedin_url):
+            raise ActionError(409, "This person asked to be removed themselves — that can't be undone here")
     audit.record(db, user, "contacts.do_not_contact", "contact", contact.id, {"value": value})
     db.commit()
     return contact

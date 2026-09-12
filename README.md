@@ -44,15 +44,17 @@ email lookup.
 | `POST /contacts/email/lookup-bulk` `{dry_run, contact_ids?}` | Count (dry run) or start lookups for all eligible | admin, operator |
 | `PUT /contacts/{id}/do-not-contact` `{do_not_contact}` | Honour (or undo) a request not to be emailed | admin, operator |
 | `DELETE /contacts/{id}` | Erase a person's record and email history (deletion request) | admin |
+| `GET /settings`, `PUT /settings/email-provider` | Mode and email provider (change: admin) | all / admin |
+| `PUT /settings/mode` `{mode: dev\|prod}` | Switch who receives sent email | admin |
+
+Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
+Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §3.
 
 Marking do-not-contact, an unsubscribe reply, and erasing all record a hash of the LinkedIn URL in
 `contact_suppressions`. Later runs drop those people, and approving one is refused — so an erasure
 can't quietly undo an opt-out. Erasing also scrubs the candidate rows that named the person and
-deletes their dev `.eml` copies from storage.
-| `GET /settings`, `PUT /settings/email-provider` | Mode and email provider (change: admin) | all / admin |
-
-Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
-Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §3.
+deletes their `.eml` copies from storage. Undoing do-not-contact lifts only an operator's own block;
+an unsubscribe the person sent themselves stands.
 
 **Phase 5** — drafts and dev-mode sending (`app/contacts/drafts.py`, `sending.py`).
 
@@ -62,11 +64,15 @@ Email lookup: Apollo is wired in, but the free plan blocks it — see PLAN.md §
 | `PUT /contacts/{id}/draft` `{subject, body}` | Edit (clears approval, marks edited) | admin, operator |
 | `POST /contacts/{id}/draft/approve` | Approve for sending | admin, operator |
 | `POST /contacts/drafts/generate-bulk` `{dry_run, contact_ids?}` | Drafts for everyone with an email and no draft | admin, operator |
-| `POST /contacts/{id}/send?force=` | Dev mode: write `storage/outbox/*.eml` with the CV attached | admin, operator |
-| `POST /contacts/send-approved` `{dry_run, contact_ids?}` | Send every approved, unsent draft | admin, operator |
+| `POST /contacts/{id}/send?force=&expected_mode=` | Send through Gmail with the CV attached | admin, operator |
+| `POST /contacts/send-approved` `{dry_run, contact_ids?, expected_mode?}` | Send every approved, unsent draft | admin, operator |
 | `GET /contacts/{id}/emails` | Sent/received emails for a contact | all roles |
 
-No real email is sent: prod mode refuses until real sending is explicitly approved.
+Both modes send real email through Gmail; the mode decides only who receives it. **dev** redirects
+every message to `DEV_REDIRECT_EMAIL` (or the sending account) with `[DEV → real@address]` in the
+subject and a banner in the body, so contacts receive nothing. **prod** sends to the contact. A copy
+of what was sent is archived under `outbox/`, and `expected_mode` makes a send fail rather than go
+out if an admin changed the mode in the meantime.
 
 **Phase 7** — reply tracking (`app/replies/`).
 

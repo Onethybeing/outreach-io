@@ -327,6 +327,18 @@ def test_do_not_contact_can_be_set_and_undone(db, world, operator):
     assert not suppression.is_suppressed(db, contact["linkedin_url"])
 
 
+def test_an_unsubscribe_cannot_be_undone_by_an_operator(db, world, operator):
+    contact = _approve(operator, world["candidates"][0])
+    # As the reply tracker records it when someone asks to be removed.
+    suppression.suppress(db, contact["linkedin_url"], "unsubscribe")
+    db.get(Contact, uuid.UUID(contact["id"])).do_not_contact = True
+    db.commit()
+
+    response = operator.put(f"/contacts/{contact['id']}/do-not-contact", json={"do_not_contact": False})
+    assert response.status_code == 409 and "themselves" in response.json()["detail"]
+    assert suppression.is_suppressed(db, contact["linkedin_url"])
+
+
 def test_erase_removes_the_person_and_their_emails(db, world, operator, make_user, login):
     candidate = world["candidates"][0]
     contact_id = uuid.UUID(_approve(operator, candidate)["id"])

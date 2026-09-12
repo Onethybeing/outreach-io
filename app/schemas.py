@@ -248,6 +248,8 @@ class DraftEditIn(BaseModel):
 class BulkActionIn(BaseModel):
     dry_run: bool = True
     contact_ids: list[uuid.UUID] | None = None
+    # The mode the caller was shown. If it has changed since, the request is refused, not sent.
+    expected_mode: str | None = Field(None, pattern="^(dev|prod)$")
 
 
 class BulkActionOut(BaseModel):
@@ -303,8 +305,14 @@ class BulkLookupOut(BaseModel):
 
 class SettingsOut(BaseModel):
     app_mode: str
+    # Where dev-mode email actually goes; None in prod, where it goes to the contacts themselves.
+    dev_redirect_email: str | None = None
     email_provider: str
     email_providers: list[str]
+
+
+class AppModeIn(BaseModel):
+    mode: str = Field(pattern="^(dev|prod)$")
 
 
 class EmailProviderIn(BaseModel):

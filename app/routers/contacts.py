@@ -5,14 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import require
-from app.config import get_settings
 from app.contacts import drafts, sending, service, verification
 from app.db import get_db
 from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
-    BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn, BulkLookupOut,
-    CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut, EmailProviderIn,
-    ManualEmailIn, SettingsOut,
+    AppModeIn, BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn,
+    BulkLookupOut, CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut,
+    EmailProviderIn, ManualEmailIn, SettingsOut,
 )
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -216,18 +215,23 @@ def generate_drafts_bulk(body: BulkActionIn, db: Session = Depends(get_db), user
 @contacts_router.post("/{contact_id}/send", response_model=ContactOut)
 def send_email(
     contact_id: uuid.UUID, force: bool = False,
+    expected_mode: str | None = Query(None, pattern="^(dev|prod)$"),
     db: Session = Depends(get_db), user: User = Depends(require("emails.send")),
 ):
-    sending.send(db, contact_id, user, force=force)
+    """expected_mode is what the caller was told the mode was; a mismatch is refused rather than sent."""
+    sending.send(db, contact_id, user, force=force, expected_mode=expected_mode)
     return contact_out(db, contact_id)
 
 
 @contacts_router.post("/send-approved", response_model=BulkActionOut)
 def send_approved_bulk(body: BulkActionIn, db: Session = Depends(get_db), user: User = Depends(require("emails.send"))):
     """Every contact with an approved draft that hasn't been sent. dry_run=true (default) only counts."""
+    mode = service.app_mode(db)
+    if body.expected_mode and body.expected_mode != mode:
+        raise service.ActionError(409, f"The sending mode is now '{mode}', not '{body.expected_mode}' — check who this would reach and try again")
     eligible = sending.bulk_eligible(db, body.contact_ids)
     if not body.dry_run and eligible:
-        sending.submit_bulk(eligible, user.id)
+        sending.submit_bulk(eligible, user.id, mode)
     return BulkActionOut(eligible=len(eligible), queued=not body.dry_run and bool(eligible))
 
 
@@ -248,11 +252,20 @@ def list_emails(contact_id: uuid.UUID, db: Session = Depends(get_db), _: User = 
 
 @settings_router.get("", response_model=SettingsOut)
 def read_settings(db: Session = Depends(get_db), _: User = Depends(require("dashboard.view"))):
+    mode = service.app_mode(db)
     return SettingsOut(
-        app_mode=get_settings().app_mode,
+        app_mode=mode,
+        dev_redirect_email=sending.dev_redirect_address(db) if mode == "dev" else None,
         email_provider=service.email_provider(db),
         email_providers=sorted(service.EMAIL_PROVIDERS),
     )
+
+
+@settings_router.put("/mode", response_model=SettingsOut)
+def change_mode(body: AppModeIn, db: Session = Depends(get_db), user: User = Depends(require("mode.toggle"))):
+    """dev redirects every email to the operator's own inbox; prod sends to the contacts themselves."""
+    service.set_app_mode(db, body.mode, user)
+    return read_settings(db, user)
 
 
 @settings_router.put("/email-provider", response_model=SettingsOut)

@@ -15,27 +15,27 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { post, put } from "@/lib/api"
 import { fmtDate, humanize } from "@/lib/format"
-import type { Contact, EmailEvent } from "@/lib/types"
+import type { AppSettings, Contact, EmailEvent } from "@/lib/types"
 import { useAction } from "@/lib/use-action"
 import { useApi } from "@/lib/use-api"
 
 export const SENT: string[] = ["sent", "sent_dev"]
 
-export function sendWarning(mode: string, to?: string | null): string {
+export function sendWarning(settings: AppSettings, to?: string | null): string {
   const target = to ? ` to ${to}` : ""
-  return mode === "prod"
-    ? `This sends a real email${target} from your Gmail, with the CV attached.`
-    : `Dev mode: the email${target} and its CV attachment are saved as a .eml file on the server. Nothing reaches an inbox.`
+  return settings.app_mode === "prod"
+    ? `This sends a real email${target} from your Gmail, with the CV attached. It reaches a real person.`
+    : `Dev mode: a real email is sent, but to you (${settings.dev_redirect_email ?? "your sending account"}) instead of${target || " the contact"}. They get nothing.`
 }
 
 export function sendSuccess(contact: Contact): string {
-  return contact.send_status === "sent_dev" ? "Saved as a dev email (.eml) — nothing was sent" : `Sent to ${contact.email}`
+  return contact.send_status === "sent_dev" ? "Sent to your own inbox (dev mode) — the contact got nothing" : `Sent to ${contact.email}`
 }
 
 type DraftDialogProps = { contactId: string | null; onClose: () => void; onChanged: () => void }
 
 export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps) {
-  const { can, settings } = useSession()
+  const { can, settings, reloadSettings } = useSession()
   const contact = useApi<Contact>(contactId ? `/contacts/${contactId}` : null)
   const emails = useApi<EmailEvent[]>(contactId ? `/contacts/${contactId}/emails` : null)
   const [edit, setEdit] = useState<{ subject: string; body: string } | null>(null)
@@ -71,7 +71,9 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
     applied(await run("generate", () => post<Contact>(`/contacts/${contactId}/draft/generate${force ? "?force=true" : ""}`), "Draft written"))
 
   async function send() {
-    applied(await run("send", () => post<Contact>(`/contacts/${contactId}/send${alreadySent ? "?force=true" : ""}`), sendSuccess))
+    const params = new URLSearchParams({ expected_mode: settings.app_mode })
+    if (alreadySent) params.set("force", "true")
+    applied(await run("send", () => post<Contact>(`/contacts/${contactId}/send?${params}`), sendSuccess))
     emails.reload()
   }
 
@@ -189,9 +191,12 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
         />
         <ConfirmDialog
           open={confirm === "send"}
-          onOpenChange={(open) => !open && setConfirm(null)}
+          onOpenChange={(open) => {
+            if (open) reloadSettings()  // the mode may have changed since this page loaded
+            if (!open) setConfirm(null)
+          }}
           title={alreadySent ? `Email ${c?.name} again?` : `Send to ${c?.email}?`}
-          description={sendWarning(settings.app_mode, c?.email)}
+          description={sendWarning(settings, c?.email)}
           confirmLabel={alreadySent ? "Send again" : "Send"}
           destructive={settings.app_mode === "prod"}
           onConfirm={send}
