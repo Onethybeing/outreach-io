@@ -39,10 +39,21 @@ def outbox(tmp_path, monkeypatch):
     return SimpleNamespace(messages=sent, dir=directory, files=lambda: sorted(directory.glob("*.eml")))
 
 
-def _use_prod(db):
-    # merge, not add: the setting may already exist in the database the tests run against.
-    db.merge(AppSetting(key="app_mode", value="prod"))
+def _set_mode(db, mode: str):
+    # merge, not add: the setting already exists in the database the tests run against.
+    db.merge(AppSetting(key="app_mode", value=mode))
     db.commit()
+
+
+def _use_prod(db):
+    _set_mode(db, "prod")
+
+
+@pytest.fixture(autouse=True)
+def dev_mode_by_default(db):
+    """The mode is a stored setting, so whatever the real app was last left in would otherwise
+    decide where these tests' emails go. Each test starts from dev and opts into prod explicitly."""
+    _set_mode(db, "dev")
 
 
 @pytest.fixture

@@ -231,7 +231,8 @@ Return only the JSON object.""",
     "generate_draft": NodeContract(
         description="Writes the personalized cold email to one contact.",
         required=("candidate_profile", "contact_name", "startup_name"),
-        optional=("contact_title", "startup_description", "startup_brief", "contact_reason", "sender_name", "has_history"),
+        optional=("contact_title", "startup_description", "startup_brief", "contact_reason", "sender_name",
+                  "has_history", "extra_instructions"),
         sample={
             "candidate_profile": SAMPLE_PROFILE,
             "contact_name": "Jane Doe",
@@ -248,6 +249,7 @@ Return only the JSON object.""",
             "contact_reason": "Co-founder and CTO, owns engineering hiring at this size.",
             "sender_name": "Priya Sharma",
             "has_history": "yes",
+            "extra_instructions": "Mention that I can start immediately.",
         },
         template="""Write a short email asking about work at a startup, from someone looking for their next role.
 
@@ -273,10 +275,19 @@ First, pick the evidence:
 - Then at most one supporting line: a second item, or 1-2 skills from the profile.
 {% else %}- The profile lists no separate roles or projects, so build the email from the skills and
   domains it does list. Choose the two closest to what {{ startup_name }} builds and stay concrete.
+  Do not list every skill in the profile: two relevant ones beat ten.
 {% endif %}
+- `current_role` is only where they happen to be now. It gets no special weight, and being a
+  founder, co-founder or CEO gets none either. If the most relevant work is an internship or a
+  side project, that is what the email is about, and the founder role goes unmentioned.
 
 Then write it:
 - 90 to 150 words. Plain text, no markdown, no emojis, no em dashes (write full stops or commas).
+- Write it as one paragraph per idea and let the lines run. Never insert a line break inside a
+  sentence: the reader's email client wraps the text itself.
+- This is someone asking about a job, not a founder introducing their company. Do not open by
+  announcing a title ("I am X, currently Co-Founder of Y"). Open with the work itself, then say what
+  draws them to {{ startup_name }}.
 - Be plain about why you are writing: you are interested in working there and want to know whether
   there is a role, or will be one. Ask once, near the end, and keep it easy to answer (a short call,
   or who to speak to). Do not demand an interview and do not apologise for writing.
@@ -288,7 +299,10 @@ Then write it:
 - Don't flatter, don't restate their marketing back to them, don't call yourself passionate or a
   perfect fit, and never claim to be a user or customer.
 - Say the resume is attached. Sign off as {{ sender_name or "the candidate" }}.
-
+{% if extra_instructions %}
+The sender asked for this, and it overrides the guidance above where they conflict:
+{{ extra_instructions }}
+{% endif %}
 Return only a JSON object: {"subject": "under 8 words", "body": "the email"}""",
         model=HEAVY_MODEL,
         temperature=0.7,

@@ -229,3 +229,28 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
                                         "then look up again", retryable=True)
     telemetry.count("apollo_saved_contact_hits")
     return EmailResult(True, email, f"Found in saved Apollo contacts (status: {match.get('email_status') or 'unknown'})")
+
+
+def find_email_saved_then_fresh(db: Session, name: str, linkedin_url: str, website: str | None) -> EmailResult:
+    """Saved contacts first (free, no credit), then a fresh Apollo lookup if they aren't saved.
+
+    The fresh step needs a paid Apollo plan. On the free plan it answers 403 API_INACCESSIBLE, and
+    rather than hide that behind "not found", the result says which half worked and what to do.
+    """
+    saved = find_email_in_saved_contacts(db, name, linkedin_url, website)
+    if saved.found:
+        return saved
+
+    try:
+        fresh = find_email(db, name, linkedin_url, website)
+    except ProviderUnavailable as exc:
+        # Retryable: nothing was spent, and saving the person on apollo.io makes the first step work.
+        return EmailResult(
+            False, None,
+            f"Not in your saved Apollo contacts, and the fresh lookup is unavailable: {exc}",
+            retryable=True,
+        )
+    if fresh.found:
+        return EmailResult(True, fresh.email, f"{fresh.note} (not in your saved contacts)")
+    # A fresh answer of "no email" is a real miss; saving them by hand could still work.
+    return EmailResult(False, None, f"{fresh.note}, and not in your saved Apollo contacts", retryable=fresh.retryable)

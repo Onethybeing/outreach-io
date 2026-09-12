@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
@@ -31,6 +32,34 @@ def clean_subject(subject: str) -> str:
     return " ".join(subject.split())
 
 
+# A line that was wrapped mid-sentence: it doesn't end a sentence, and the next line continues it in
+# lower case. "Best regards," followed by a name is not this, because the name is capitalised.
+_CONTINUES = re.compile(r"[^.!?:;)\"']\s*$")
+
+
+def unwrap_paragraphs(body: str) -> str:
+    """Undo hard wrapping inside a sentence, keeping real line breaks.
+
+    Models often wrap the body at some width of their own. In an email that shows up as a sentence
+    broken across two lines, because the reader's client wraps it again at a different width.
+    Blank lines (paragraphs) and deliberate breaks like a sign-off are left alone.
+    """
+    out: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if (
+            out
+            and stripped
+            and out[-1].strip()
+            and _CONTINUES.search(out[-1])
+            and stripped[:1].islower()
+        ):
+            out[-1] = f"{out[-1].rstrip()} {stripped}"
+        else:
+            out.append(stripped)
+    return "\n".join(out).strip()
+
+
 def _check_can_draft(contact: Contact, force: bool) -> None:
     if contact.do_not_contact:
         raise ActionError(400, "This contact asked not to be contacted")
@@ -51,7 +80,10 @@ class State(TypedDict, total=False):
     prompt_id: str
 
 
-def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume):
+MAX_INSTRUCTIONS = 1000
+
+
+def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume, instructions: str = ""):
     def generate_draft(state: State) -> dict:
         prompt = prompts.get_active(db, "generate_draft")
         profile = resume.parsed_profile or {}
@@ -67,6 +99,7 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             # A CV parsed before roles and projects were extracted has neither. Say so, rather than
             # asking the model to build half the email out of a list that isn't there.
             "has_history": "yes" if (profile.get("experience") or profile.get("projects")) else "",
+            "extra_instructions": instructions,
             "sender_name": profile.get("name") or "",
         })
         raw = llm.complete_json(
@@ -74,7 +107,7 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
             name="generate_draft", metadata={"prompt_version": prompt.version, "prompt_id": str(prompt.id)},
         )
         subject = clean_subject(str(raw.get("subject") or ""))
-        body = str(raw.get("body") or "").strip()
+        body = unwrap_paragraphs(str(raw.get("body") or ""))
         if not subject or not body:
             raise llm.LLMError("generate_draft: the model returned an empty subject or body")
         return {"subject": subject[:MAX_SUBJECT], "body": body, "prompt_id": str(prompt.id)}
@@ -86,7 +119,12 @@ def _build_graph(db: Session, contact: Contact, startup: Startup, resume: Resume
     return graph.compile()
 
 
-def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False) -> Contact:
+def generate(
+    db: Session, contact_id: uuid.UUID, user: User, force: bool = False, instructions: str = ""
+) -> Contact:
+    """`instructions` is what the person typed when asking for a rewrite, e.g. "shorter, and mention
+    the internship". It is added to the prompt and overrides the default guidance where they clash."""
+    instructions = " ".join(instructions.split())[:MAX_INSTRUCTIONS]
     contact = db.get(Contact, contact_id, with_for_update=True)
     if contact is None:
         raise ActionError(404, "Contact not found")
@@ -108,7 +146,7 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
         ) as root, telemetry.trace_attributes(
             trace_name="generate_draft", session_id=str(contact_id), tags=["contact", "draft"],
         ):
-            state = _build_graph(db, contact, startup, resume).invoke({})
+            state = _build_graph(db, contact, startup, resume, instructions).invoke({})
             root.update(output={"subject": state["subject"]})
     except EXPECTED_ERRORS as exc:
         db.rollback()
@@ -130,7 +168,9 @@ def generate(db: Session, contact_id: uuid.UUID, user: User, force: bool = False
     contact.draft_approved_at = contact.draft_approved_by = None
     contact.draft_edited, contact.draft_eval = False, None
     contact.draft_trace_id = trace_id if client is not None else None
-    audit.record(db, user, "drafts.generate", "contact", contact.id, {"prompt_id": state["prompt_id"], "force": force})
+    audit.record(db, user, "drafts.generate", "contact", contact.id, {
+        "prompt_id": state["prompt_id"], "force": force, "instructions": instructions or None,
+    })
     db.commit()
     evals.submit_draft(contact.id)
     return contact

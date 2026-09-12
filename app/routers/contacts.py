@@ -11,8 +11,8 @@ from app.db import get_db
 from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
     AppModeIn, BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn,
-    BulkLookupOut, CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut,
-    EmailProviderIn, ManualEmailIn, SettingsOut,
+    BulkLookupOut, CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, DraftInstructionsIn,
+    EmailEventOut, EmailProviderIn, ManualEmailIn, SettingsOut,
 )
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -182,10 +182,11 @@ def lookup_bulk(body: BulkLookupIn, db: Session = Depends(get_db), user: User = 
 
 @contacts_router.post("/{contact_id}/draft/generate", response_model=ContactOut)
 def generate_draft(
-    contact_id: uuid.UUID, force: bool = False,
+    contact_id: uuid.UUID, force: bool = False, body: DraftInstructionsIn | None = None,
     db: Session = Depends(get_db), user: User = Depends(require("drafts.act")),
 ):
-    drafts.generate(db, contact_id, user, force=force)
+    """An optional `instructions` body is what the person typed when asking for a rewrite."""
+    drafts.generate(db, contact_id, user, force=force, instructions=(body.instructions if body else "") or "")
     return contact_out(db, contact_id)
 
 

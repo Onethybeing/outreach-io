@@ -84,7 +84,12 @@ email lookup.
 | `PUT /settings/mode` `{mode: dev\|prod}` | Switch who receives sent email | admin |
 
 Verification: Apollo company page (free plan) + BrightData LinkedIn profile + LLM tie-break.
-Email lookup: Apollo is wired in, but the free plan blocks it, see PLAN.md §3.
+
+Email lookup has three providers, chosen in Settings. The default, `apollo`, checks your saved
+Apollo contacts first (free, no credit spent) and falls through to a fresh `people/match` lookup for
+anyone not saved. `apollo_saved_contacts` never touches the paid endpoint; `apollo_fresh_only` skips
+the saved check. The fresh lookup needs a paid Apollo plan: on the free plan it answers
+403 `API_INACCESSIBLE`, and the result says so rather than reporting a plain miss.
 
 Marking do-not-contact, an unsubscribe reply, and erasing all record a hash of the LinkedIn URL in
 `contact_suppressions`. Later runs drop those people, and approving one is refused, so an erasure

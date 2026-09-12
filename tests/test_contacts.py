@@ -608,14 +608,47 @@ def test_retryable_miss_is_awaiting_user_and_can_retry(db, world, operator):
     assert second.status_code == 200 and second.json()["email"] == "simon@powerfulmedical.com"
 
 
-def test_default_email_provider_is_saved_contacts(db, make_user, login, monkeypatch):
+def test_default_email_provider_tries_saved_then_fresh(db, make_user, login, monkeypatch):
     from app.models import AppSetting
 
     db.query(AppSetting).filter(AppSetting.key == "email_provider").delete()
     db.commit()
     body = login(make_user(UserRole.viewer)).get("/settings").json()
-    assert body["email_provider"] == "apollo_saved_contacts"
-    assert body["email_providers"] == ["apollo", "apollo_saved_contacts"]
+    assert body["email_provider"] == "apollo"
+    assert body["email_providers"] == ["apollo", "apollo_fresh_only", "apollo_saved_contacts"]
+
+
+def test_saved_contacts_are_tried_before_spending_a_fresh_lookup(db, monkeypatch):
+    calls = []
+
+    def saved(db_, name, url, website):
+        calls.append("saved")
+        return apollo.EmailResult(True, "jane@acme.example", "Found in saved Apollo contacts")
+
+    monkeypatch.setattr(apollo, "find_email_in_saved_contacts", saved)
+    monkeypatch.setattr(apollo, "find_email", lambda *a: pytest.fail("the fresh lookup should not run"))
+    result = apollo.find_email_saved_then_fresh(db, "Jane", "https://www.linkedin.com/in/jane", "acme.example")
+    assert result.found and result.email == "jane@acme.example" and calls == ["saved"]
+
+
+def test_a_person_not_saved_falls_through_to_a_fresh_lookup(db, monkeypatch):
+    monkeypatch.setattr(apollo, "find_email_in_saved_contacts",
+                        lambda *a: apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet", retryable=True))
+    monkeypatch.setattr(apollo, "find_email",
+                        lambda *a: apollo.EmailResult(True, "jane@acme.example", "Found by Apollo (status: verified)"))
+    result = apollo.find_email_saved_then_fresh(db, "Jane", "https://www.linkedin.com/in/jane", "acme.example")
+    assert result.found and result.email == "jane@acme.example" and "not in your saved contacts" in result.note
+
+
+def test_a_blocked_fresh_lookup_explains_both_halves_and_stays_retryable(db, monkeypatch):
+    """The free plan refuses the fresh call. That is a state the user can fix, not a dead end."""
+    monkeypatch.setattr(apollo, "find_email_in_saved_contacts",
+                        lambda *a: apollo.EmailResult(False, None, "Not in your saved Apollo contacts yet", retryable=True))
+    monkeypatch.setattr(apollo, "find_email",
+                        lambda *a: (_ for _ in ()).throw(apollo.ProviderUnavailable("Apollo's current plan doesn't include email lookup.")))
+    result = apollo.find_email_saved_then_fresh(db, "Jane", "https://www.linkedin.com/in/jane", "acme.example")
+    assert not result.found and result.retryable
+    assert "saved Apollo contacts" in result.note and "plan doesn't include" in result.note
 
 
 def test_apollo_enrich_by_name_only_trusts_matching_company(db, monkeypatch):

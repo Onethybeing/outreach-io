@@ -245,6 +245,12 @@ class DraftEditIn(BaseModel):
     body: str
 
 
+class DraftInstructionsIn(BaseModel):
+    """What to change on a rewrite, in the sender's own words. Optional."""
+
+    instructions: str | None = Field(None, max_length=1000)
+
+
 class BulkActionIn(BaseModel):
     dry_run: bool = True
     contact_ids: list[uuid.UUID] | None = None
