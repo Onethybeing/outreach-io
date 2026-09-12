@@ -26,14 +26,14 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
       body: json === undefined ? body : JSON.stringify(json),
     })
   } catch {
-    throw new ApiError(0, "Can't reach the server — check your connection")
+    throw new ApiError(0, "Can't reach the server. Check your connection.")
   }
   if (!response.ok) {
     let message = `Request failed (HTTP ${response.status})`
     try {
       message = formatDetail((await response.json()).detail) ?? message
     } catch {
-      // not JSON — keep the generic message
+      // not JSON, so keep the generic message
     }
     throw new ApiError(response.status, message)
   }

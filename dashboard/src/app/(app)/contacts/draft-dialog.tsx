@@ -29,7 +29,7 @@ export function sendWarning(settings: AppSettings, to?: string | null): string {
 }
 
 export function sendSuccess(contact: Contact): string {
-  return contact.send_status === "sent_dev" ? "Sent to your own inbox (dev mode) — the contact got nothing" : `Sent to ${contact.email}`
+  return contact.send_status === "sent_dev" ? "Sent to your own inbox (dev mode). The contact got nothing" : `Sent to ${contact.email}`
 }
 
 type DraftDialogProps = { contactId: string | null; onClose: () => void; onChanged: () => void }
@@ -141,7 +141,7 @@ export function DraftDialog({ contactId, onClose, onChanged }: DraftDialogProps)
                   </span>
                   {e.classification && <StatusBadge status={e.classification} />}
                 </div>
-                <p className="mt-1 whitespace-pre-wrap">{e.snippet ?? "—"}</p>
+                <p className="mt-1 whitespace-pre-wrap">{e.snippet ?? "-"}</p>
               </div>
             ))}
           </div>

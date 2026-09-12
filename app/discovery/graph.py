@@ -29,7 +29,7 @@ from app.prompts import PromptError, render
 
 logger = logging.getLogger(__name__)
 
-PROMPT_NODES = ("parse_resume", "build_search_queries", "discover_startups", "find_kdms")
+PROMPT_NODES = ("parse_resume", "build_search_queries", "discover_startups", "research_startup", "find_kdms")
 MAX_QUERIES = 6
 RESULTS_PER_QUERY = 5
 MAX_RESULTS_TO_LLM = 40
@@ -37,6 +37,9 @@ KDM_SEARCH_RESULTS = 10
 MAX_RESUME_CHARS = 12_000  # keeps parse_resume inside Groq's 8k tokens/minute
 STALE_AFTER = timedelta(minutes=10)
 KDM_QUERY = '"{name}" founder OR co-founder OR CEO OR CTO OR "head of talent" OR recruiter OR "hiring manager"'
+RESEARCH_QUERY = '"{name}" {domain} what they do product funding news hiring'
+RESEARCH_RESULTS = 5
+RESEARCH_CONTENT_CHARS = 800  # longer than the discovery pass: this is what the drafts are built on
 
 EXPECTED_ERRORS = (
     llm.LLMError, tavily.SearchError, ExtractionError, vault.VaultError, PromptError,
@@ -272,6 +275,80 @@ def discover_startups(ctx: RunContext, state: State) -> NodeResult:
     )
 
 
+def research_startups(ctx: RunContext, state: State) -> NodeResult:
+    """One search and one summary per startup, so drafts can name something real about the company.
+
+    Best effort: a company we learn nothing about still gets contacted, just with a thinner email.
+    """
+    researched, failed = 0, 0
+    for startup_id in state["startup_ids"]:
+        startup = ctx.db.get(Startup, uuid.UUID(startup_id))
+        query = RESEARCH_QUERY.format(name=startup.name.replace('"', ""), domain=startup.domain or "")
+        try:
+            results = tavily.search(ctx.db, query.strip(), RESEARCH_RESULTS, content_chars=RESEARCH_CONTENT_CHARS)
+            if not results:
+                ctx.emit("research_startup", "warning", f"Nothing found about {startup.name}")
+                continue
+            brief = ctx.llm_json("research_startup", {
+                "startup_name": startup.name,
+                "startup_website": startup.website or "",
+                "candidate_profile": json.dumps(state["profile"]),
+                "search_results": json.dumps(results),
+            })
+        except EXPECTED_ERRORS as exc:
+            # One company's research failing must not cost the whole run.
+            failed += 1
+            ctx.emit("research_startup", "warning", f"Could not research {startup.name}: {exc}")
+            continue
+
+        startup.brief = _clean_brief(brief, {r["url"] for r in results})
+        startup.researched_at = _now()
+        if startup.brief:
+            researched += 1
+            if not startup.description and startup.brief.get("what_they_do"):
+                startup.description = str(startup.brief["what_they_do"])[:1000]
+    ctx.db.flush()
+
+    note = f", {failed} could not be researched" if failed else ""
+    return {}, f"Researched {researched} of {len(state['startup_ids'])} startups{note}", {"researched": researched}
+
+
+def _clean_brief(raw: Any, seen_urls: set[str]) -> dict | None:
+    """Keep only the fields we asked for, and only news URLs the search actually returned."""
+    if not isinstance(raw, dict):
+        return None
+
+    def text(key: str) -> str | None:
+        value = raw.get(key)
+        return str(value).strip()[:500] or None if isinstance(value, (str, int, float)) else None
+
+    def items(key: str, limit: int) -> list[str]:
+        value = raw.get(key)
+        return [str(v).strip()[:200] for v in value[:limit] if isinstance(v, (str, int, float)) and str(v).strip()] if isinstance(value, list) else []
+
+    news = []
+    for item in (raw.get("recent_news") or [])[:3] if isinstance(raw.get("recent_news"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        fact = str(item.get("fact") or "").strip()[:300]
+        url = item.get("url")
+        if fact:
+            # Never keep a citation the model made up: only URLs the search returned.
+            news.append({"fact": fact, "url": url if url in seen_urls else None})
+
+    brief = {
+        "what_they_do": text("what_they_do"),
+        "product": text("product"),
+        "stage": text("stage"),
+        "team_size": text("team_size"),
+        "recent_news": news,
+        "tech_signals": items("tech_signals", 5),
+        "hiring_signals": text("hiring_signals"),
+        "overlap_with_candidate": items("overlap_with_candidate", 3),
+    }
+    return brief if any(brief.values()) else None
+
+
 def find_kdms(ctx: RunContext, state: State) -> NodeResult:
     profile = state["profile"]
     target_role = (profile.get("target_titles") or [profile.get("current_role") or "engineer"])[0]
@@ -368,6 +445,7 @@ STEPS: tuple[tuple[str, str, Callable[[RunContext, State], NodeResult]], ...] = 
     ("parse_resume", "Understanding the candidate's profile", parse_resume),
     ("build_search_queries", "Writing search queries", build_search_queries),
     ("discover_startups", "Searching for matching startups", discover_startups),
+    ("research_startups", "Reading up on each startup", research_startups),
     ("find_kdms", "Finding decision-makers on LinkedIn", find_kdms),
     ("dedupe_against_db", "Checking for people already in contacts", dedupe_against_db),
 )
@@ -386,7 +464,7 @@ def _wrap(ctx: RunContext, name: str, start_message: str, fn: Callable[[RunConte
             raise RunFailed(str(exc), name) from exc
         except Exception as exc:
             logger.exception("Discovery step %s crashed", name)
-            raise RunFailed(f"Unexpected error in {name} ({type(exc).__name__}) — see server logs", name) from exc
+            raise RunFailed(f"Unexpected error in {name} ({type(exc).__name__}). See server logs", name) from exc
         ctx.emit(name, "completed", message, data)
         return update
 
@@ -401,7 +479,8 @@ def build_graph(ctx: RunContext):
     graph.add_edge("ingest_resume", "parse_resume")
     graph.add_edge("parse_resume", "build_search_queries")
     graph.add_edge("build_search_queries", "discover_startups")
-    graph.add_conditional_edges("discover_startups", lambda s: END if s.get("stop") else "find_kdms")
+    graph.add_conditional_edges("discover_startups", lambda s: END if s.get("stop") else "research_startups")
+    graph.add_edge("research_startups", "find_kdms")
     graph.add_conditional_edges("find_kdms", lambda s: END if s.get("stop") else "dedupe_against_db")
     graph.add_edge("dedupe_against_db", END)
     return graph.compile()
@@ -459,7 +538,7 @@ def execute_run(db: Session, run_id: uuid.UUID) -> None:
         db.rollback()
         stopped = True
         logger.warning("Discovery run %s was stopped elsewhere; worker exiting", run_id)
-    except Exception as exc:  # noqa: BLE001 — every failure must end the run cleanly
+    except Exception as exc:  # noqa: BLE001: every failure must end the run cleanly
         db.rollback()
         # Progress events commit as they go, so earlier steps' candidates are already saved. A failed
         # run's partial list must not be reviewable/approvable; startups stay for the record.
@@ -485,7 +564,7 @@ def run_in_background(run_id: uuid.UUID) -> None:
     try:
         with SessionLocal() as db:
             execute_run(db, run_id)
-    except Exception:  # noqa: BLE001 — a pool thread has nobody to raise to
+    except Exception:  # noqa: BLE001: a pool thread has nobody to raise to
         logger.exception("Discovery run %s crashed before it could record a failure", run_id)
 
 

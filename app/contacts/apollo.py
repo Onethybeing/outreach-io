@@ -88,7 +88,7 @@ def find_email(db: Session, name: str, linkedin_url: str, website: str | None) -
         try:
             headers = _headers(db)
         except (vault.VaultError, KeyError) as exc:
-            raise ProviderUnavailable(f"Apollo is not configured — add its key in Settings → Vault ({exc})")
+            raise ProviderUnavailable(f"Apollo is not configured. Add its key in Settings > Vault ({exc})")
         try:
             telemetry.heartbeat()
             response = httpx.post(f"{BASE}/people/match", headers=headers, json=body, timeout=30)
@@ -107,9 +107,9 @@ def find_email(db: Session, name: str, linkedin_url: str, website: str | None) -
                 )
             raise ProviderUnavailable("Apollo refused the request (HTTP 403)")
         if response.status_code == 401:
-            raise ProviderUnavailable("Apollo rejected the API key — check Settings → Vault")
+            raise ProviderUnavailable("Apollo rejected the API key. Check Settings > Vault")
         if response.status_code == 429:
-            raise EmailLookupError("Apollo rate limit reached — try again later")
+            raise EmailLookupError("Apollo rate limit reached. Try again later")
         if response.status_code != 200:
             raise EmailLookupError(f"Apollo error (HTTP {response.status_code})")
 
@@ -147,11 +147,11 @@ def _search_saved_contacts(headers: dict, query: str, page: int) -> tuple[list[d
     except httpx.HTTPError as exc:
         raise EmailLookupError(f"Could not reach Apollo: {type(exc).__name__}")
     if response.status_code == 401:
-        raise ProviderUnavailable("Apollo rejected the API key — check Settings → Vault")
+        raise ProviderUnavailable("Apollo rejected the API key. Check Settings > Vault")
     if response.status_code == 403:
         raise ProviderUnavailable("Apollo refused the contacts search (HTTP 403)")
     if response.status_code == 429:
-        raise EmailLookupError("Apollo rate limit reached — try again later")
+        raise EmailLookupError("Apollo rate limit reached. Try again later")
     if response.status_code != 200:
         raise EmailLookupError(f"Apollo error (HTTP {response.status_code})")
     try:
@@ -177,7 +177,7 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
     try:
         headers = _headers(db)
     except (vault.VaultError, KeyError) as exc:
-        raise ProviderUnavailable(f"Apollo is not configured — add its key in Settings → Vault ({exc})")
+        raise ProviderUnavailable(f"Apollo is not configured. Add its key in Settings > Vault ({exc})")
 
     target = linkedin_profile_url(linkedin_url)
     domain = website_domain(website)
@@ -221,11 +221,11 @@ def find_email_in_saved_contacts(db: Session, name: str, linkedin_url: str, webs
     else:
         match = None
     if match is None:
-        return EmailResult(False, None, "Not in your saved Apollo contacts yet — reveal the email on apollo.io, "
+        return EmailResult(False, None, "Not in your saved Apollo contacts yet. Reveal the email on apollo.io, "
                                         "save the person, then look up again", retryable=True)
     email = _usable_email(match.get("email"))
     if not email:
-        return EmailResult(False, None, "Saved in Apollo, but the email isn't revealed yet — reveal it on apollo.io, "
+        return EmailResult(False, None, "Saved in Apollo, but the email isn't revealed yet. Reveal it on apollo.io, "
                                         "then look up again", retryable=True)
     telemetry.count("apollo_saved_contact_hits")
     return EmailResult(True, email, f"Found in saved Apollo contacts (status: {match.get('email_status') or 'unknown'})")

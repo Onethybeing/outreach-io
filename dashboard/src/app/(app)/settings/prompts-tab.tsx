@@ -170,7 +170,7 @@ function PromptEditor({ prompt, onChanged }: { prompt: NodePrompt; onChanged: ()
           {canEdit && (
             <>
               <div className="space-y-1.5">
-                <Label htmlFor="prompt-variables">Test variables (optional JSON — blank uses sample values)</Label>
+                <Label htmlFor="prompt-variables">Test variables (optional JSON, blank uses sample values)</Label>
                 <Textarea id="prompt-variables" value={variables} onChange={(e) => setVariables(e.target.value)} className="min-h-20 font-mono text-xs" placeholder='{"company": "Acme"}' />
               </div>
               <div className="flex flex-wrap gap-2">
@@ -220,7 +220,7 @@ function PromptEditor({ prompt, onChanged }: { prompt: NodePrompt; onChanged: ()
                       {v.model} · {v.temperature}
                     </TableCell>
                     <TableCell className="max-w-64 truncate" title={v.note ?? undefined}>
-                      {v.note ?? "—"}
+                      {v.note ?? "-"}
                     </TableCell>
                     <TableCell>{fmtDate(v.created_at)}</TableCell>
                     <TableCell className="text-right">
@@ -273,7 +273,7 @@ function Output({ title, text, diff }: { title: string; text: string; diff?: boo
       <pre className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap">
         {diff
           ? text.split("\n").map((line, i) => (
-              <div key={i} className={cn(line.startsWith("+") && "text-emerald-700", line.startsWith("-") && "text-red-700")}>
+              <div key={i} className={cn(line.startsWith("+") && "text-emerald-700 dark:text-emerald-400", line.startsWith("-") && "text-red-700 dark:text-red-400")}>
                 {line || " "}
               </div>
             ))

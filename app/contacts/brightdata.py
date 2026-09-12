@@ -33,9 +33,9 @@ class Profile:
 
 def _check(response: httpx.Response, step: str) -> None:
     if response.status_code == 401:
-        raise ProfileError("BrightData rejected the API key — check Settings → Vault")
+        raise ProfileError("BrightData rejected the API key. Check Settings > Vault")
     if response.status_code in (402, 403):
-        raise ProfileError(f"BrightData refused the {step} (HTTP {response.status_code}) — check account billing/access")
+        raise ProfileError(f"BrightData refused the {step} (HTTP {response.status_code}). Check account billing/access")
     if response.status_code >= 400:
         raise ProfileError(f"BrightData {step} failed (HTTP {response.status_code})")
 

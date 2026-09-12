@@ -27,7 +27,7 @@ class WorkerPool:
             fn, args = self._queue.get()
             try:
                 fn(*args)
-            except Exception:  # noqa: BLE001 — a worker must survive any job
+            except Exception:  # noqa: BLE001: a worker must survive any job
                 logger.exception("%s job %s%r crashed", self.name, getattr(fn, "__name__", fn), args)
 
     def submit(self, fn: Callable[..., Any], *args: Any) -> None:

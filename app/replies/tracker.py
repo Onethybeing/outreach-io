@@ -1,7 +1,7 @@
 """Reply tracking (PLAN.md §2B track_replies + classify_reply).
 
-For each contact that was really emailed, find new inbound messages in the sender's Gmail — replies
-from the contact, messages in the sent thread, and bounce notices naming the contact's address —
+For each contact that was really emailed, find new inbound messages in the sender's Gmail: replies
+from the contact, messages in the sent thread, and bounce notices naming the contact's address.
 label each one, store it, and update the contact. Dev-mode sends never reach a mailbox, so they're skipped.
 """
 
@@ -170,7 +170,7 @@ def poll_all(db: Session) -> PollSummary:
                 except gmail.GmailError as exc:
                     db.rollback()
                     summary.errors.append(f"{contact.name}: {exc}")  # e.g. a rate limit; retry next poll
-                except Exception as exc:  # noqa: BLE001 — one contact's odd message mustn't stop the rest
+                except Exception as exc:  # noqa: BLE001: one contact's odd message mustn't stop the rest
                     db.rollback()
                     logger.exception("Reply check failed for contact %s", contact.id)
                     summary.errors.append(f"{contact.name}: {type(exc).__name__}")

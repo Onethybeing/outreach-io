@@ -1,12 +1,12 @@
 import type { Rate } from "@/lib/types"
 
 export function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—"
+  if (!iso) return "-"
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
 }
 
 export function fmtRate(rate: Rate): string {
-  return rate.value === null ? `— (n=${rate.n})` : `${(rate.value * 100).toFixed(1)}% (n=${rate.n})`
+  return rate.value === null ? `- (n=${rate.n})` : `${(rate.value * 100).toFixed(1)}% (n=${rate.n})`
 }
 
 export function isRate(value: unknown): value is Rate {

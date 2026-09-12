@@ -76,7 +76,7 @@ class GCSStorage:
     def read(self, key: str) -> bytes:
         try:
             return self.bucket.blob(key).download_as_bytes()
-        except Exception as exc:  # noqa: BLE001 — google.api_core errors vary by failure
+        except Exception as exc:  # noqa: BLE001: google.api_core errors vary by failure
             raise StorageError(f"Could not read {key} from the bucket: {type(exc).__name__}")
 
     def exists(self, key: str) -> bool:

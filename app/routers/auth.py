@@ -56,9 +56,9 @@ def callback(
     try:
         saved = read_oauth_state(request.cookies.get(STATE_COOKIE, ""))
     except BadSignature:  # also covers expiry
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sign-in expired — start again at /auth/login")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sign-in expired. Start again at /auth/login")
     if not code or not state or not secrets.compare_digest(state, saved["state"]):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sign-in state mismatch — start again")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sign-in state mismatch. Start again")
 
     claims = exchange_code_for_claims(code, saved["nonce"])
     email = claims["email"].lower()
@@ -66,7 +66,7 @@ def callback(
     if user is None or not user.is_active:
         audit.record(db, None, "auth.login_denied", "email", email)
         db.commit()
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"{email} does not have access — ask an admin")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"{email} does not have access. Ask an admin")
 
     user.last_login_at = datetime.now(timezone.utc)
     if not user.name and claims.get("name"):

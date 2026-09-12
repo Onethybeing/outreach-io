@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import Image from "next/image"
 import Link from "next/link"
 
 import { buttonVariants } from "@/components/ui/button"
@@ -12,10 +13,11 @@ export default function AboutPage() {
   return (
     <main className="mx-auto max-w-2xl space-y-8 px-6 py-16">
       <div className="space-y-3">
+        <Image src="/logo.png" alt="" width={64} height={64} className="dark:invert" priority />
         <h1 className="text-3xl font-semibold tracking-tight">Outreach</h1>
         <p className="text-lg text-muted-foreground">
           A personal job-search assistant. It reads a CV, finds startups that fit it, works out who to talk to, and writes
-          the emails — but a person approves every message before it is sent.
+          the emails, but a person approves every message before it is sent.
         </p>
       </div>
 

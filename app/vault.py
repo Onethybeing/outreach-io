@@ -63,7 +63,7 @@ def _decrypt(token: str) -> dict:
     try:
         return json.loads(_fernet().decrypt(token.encode()))
     except InvalidToken:
-        raise RuntimeError("Vault entry can't be decrypted — VAULT_MASTER_KEY changed?")
+        raise RuntimeError("Vault entry can't be decrypted. Did VAULT_MASTER_KEY change?")
 
 
 def _clean(provider: str, values: dict) -> dict:
@@ -114,7 +114,7 @@ def _commit(db: Session, provider: str) -> None:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise VaultError(f"Another change to {provider} happened at the same time — retry")
+        raise VaultError(f"Another change to {provider} happened at the same time. Retry")
     finally:
         _cache.pop(provider, None)
 
@@ -262,7 +262,7 @@ def get_credential(db: Session, provider: str) -> dict:
         return dict(cached[2])
     row = _active(db, provider)
     if row is None:
-        raise VaultError(f"{provider} is not configured — add it in Settings → Vault")
+        raise VaultError(f"{provider} is not configured. Add it in Settings > Vault")
     values = _decrypt(row.encrypted_value)
     _cache[provider] = (time.monotonic() + CACHE_TTL_SECONDS, row.version, values)
     return dict(values)

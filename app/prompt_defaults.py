@@ -1,7 +1,7 @@
 """Version-1 prompt for every LLM node, plus the variables each node supplies (PLAN.md §8).
 
 Templates use Jinja syntax: {{ variable }}. `required` must appear in every edited version;
-`optional` may be used or left out, and renders as empty text when a node has no value — use
+`optional` may be used or left out, and renders as empty text when a node has no value, so use
 `{{ x or "fallback" }}` or `{% if x %}`. `sample` validates edits and feeds "Test on sample".
 """
 
@@ -39,7 +39,7 @@ NODES: dict[str, NodeContract] = {
         required=("resume_text",),
         optional=(),
         sample={
-            "resume_text": "Priya Sharma — ML Engineer, 4 years. Built RAG pipelines and fine-tuned "
+            "resume_text": "Priya Sharma, ML Engineer, 4 years. Built RAG pipelines and fine-tuned "
             "LLMs at a Series B dev-tools startup. Python, PyTorch, FastAPI.",
         },
         template="""You extract a structured profile from a resume.
@@ -53,7 +53,7 @@ Return only a JSON object with these keys:
 - domains (list of industries or problem areas the person has worked in)
 - target_titles (list of 2-4 job titles this person is a strong fit for next)
 
-Use only facts in the resume. If something is missing, use null or an empty list — never guess.
+Use only facts in the resume. If something is missing, use null or an empty list. Never guess.
 
 Resume:
 \"\"\"
@@ -171,16 +171,66 @@ Return only a JSON object: {"match": true|false, "confidence": 0.0, "reason": "o
         model=LIGHT_MODEL,
         temperature=0.0,
     ),
+    "research_startup": NodeContract(
+        description="Turns search results about one company into a short factual brief for the drafts.",
+        required=("startup_name", "search_results"),
+        optional=("startup_website", "candidate_profile"),
+        sample={
+            "startup_name": "Acme Vector",
+            "startup_website": "https://acmevector.example",
+            "candidate_profile": SAMPLE_PROFILE,
+            "search_results": (
+                '[{"title": "Acme Vector raises $12M Series A", "url": "https://news.example/acme-a", '
+                '"content": "Acme Vector, which builds retrieval infrastructure for LLM apps, raised a '
+                '$12M Series A led by Example Ventures. The team of 18 is hiring backend and ML engineers."}]'
+            ),
+        },
+        template="""Summarise what is known about one company, for someone writing them a short job-application email.
+
+Company: {{ startup_name }}{% if startup_website %} ({{ startup_website }}){% endif %}
+{% if candidate_profile %}
+The person writing has this background (JSON). Note anything that genuinely overlaps:
+{{ candidate_profile }}
+{% endif %}
+Search results (JSON):
+{{ search_results }}
+
+Use only what the search results state. Never guess funding, headcount, customers or dates. Leave a
+field null or its list empty when the results don't support it. An empty brief is fine and useful.
+
+Return only a JSON object with these keys:
+- what_they_do: one sentence, concrete, in plain words (no marketing language)
+- product: what they actually sell or build, or null
+- stage: e.g. "seed", "Series A, $12M (2026)", or null
+- team_size: a number or short phrase if stated, else null
+- recent_news: up to 3 short factual items, each with "fact" and "url" taken from the results
+- tech_signals: up to 5 technologies, methods or problem areas the company works on
+- hiring_signals: what they say they're hiring for, or null
+- overlap_with_candidate: up to 3 short, honest points connecting the candidate's stated experience
+  to this company's work, only where both sides are supported. Empty list if there is no real overlap.
+
+Return only the JSON object.""",
+        model=LIGHT_MODEL,
+        temperature=0.2,
+    ),
     "generate_draft": NodeContract(
         description="Writes the personalized cold email to one contact.",
         required=("candidate_profile", "contact_name", "startup_name"),
-        optional=("contact_title", "startup_description", "sender_name"),
+        optional=("contact_title", "startup_description", "startup_brief", "contact_reason", "sender_name"),
         sample={
             "candidate_profile": SAMPLE_PROFILE,
             "contact_name": "Jane Doe",
             "contact_title": "Co-founder & CTO",
             "startup_name": "Acme Vector",
             "startup_description": "Retrieval infrastructure for LLM apps.",
+            "startup_brief": (
+                '{"what_they_do": "Builds retrieval infrastructure that LLM apps use to search their own data.", '
+                '"product": "A hosted vector search API", "stage": "Series A, $12M (2026)", "team_size": 18, '
+                '"recent_news": [{"fact": "Raised a $12M Series A led by Example Ventures", "url": "https://news.example/acme-a"}], '
+                '"tech_signals": ["RAG", "vector search", "Python"], "hiring_signals": "backend and ML engineers", '
+                '"overlap_with_candidate": ["Has built RAG pipelines in production"]}'
+            ),
+            "contact_reason": "Co-founder and CTO, owns engineering hiring at this size.",
             "sender_name": "Priya Sharma",
         },
         template="""Write a short cold email from a job candidate to a decision-maker at a startup.
@@ -189,15 +239,22 @@ Candidate profile (JSON):
 {{ candidate_profile }}
 
 Recipient: {{ contact_name }}{% if contact_title %}, {{ contact_title }}{% endif %} at {{ startup_name }}
-{% if startup_description %}What {{ startup_name }} does: {{ startup_description }}
+{% if contact_reason %}Why them: {{ contact_reason }}
+{% endif %}{% if startup_description %}What {{ startup_name }} does: {{ startup_description }}
+{% endif %}{% if startup_brief %}
+Researched notes on {{ startup_name }} (JSON, gathered from public sources):
+{{ startup_brief }}
 {% endif %}
 Rules:
-- 90 to 140 words. Plain text, no markdown, no emojis.
+- 90 to 140 words. Plain text, no markdown, no emojis, no em dashes (write full stops or commas).
 - Open with one specific, true connection between the candidate's experience and {{ startup_name }}'s work.
+  Prefer something from the researched notes (their product, a recent development, or a listed
+  overlap) over a generic compliment. Use at most one such detail, and only if the notes state it.
 - Mention 1-2 concrete skills or results from the profile. Never invent achievements, numbers or companies.
-- Every claim must be stated in the profile as-is. Don't merge separate items into one claim (e.g. a
-  skill from one area applied to data from another domain) and don't imply experience in the
-  recipient's industry unless the profile lists it.
+- Every claim must be stated in the profile or the notes as-is. Don't merge separate items into one
+  claim (e.g. a skill from one area applied to data from another domain) and don't imply experience
+  in the recipient's industry unless the profile lists it.
+- Don't flatter, don't restate their marketing back to them, and never claim to be a user or customer.
 - Say the resume is attached. End with one low-effort ask (a short call, or who to talk to).
 - Sign off as {{ sender_name or "the candidate" }}.
 
@@ -211,7 +268,7 @@ Return only a JSON object: {"subject": "under 8 words", "body": "the email"}""",
         optional=("sent_email",),
         sample={
             "sent_email": "Hi Jane, I build RAG pipelines ... resume attached.",
-            "reply_text": "Thanks Priya — I'm out of office until Monday, will reply then.",
+            "reply_text": "Thanks Priya, I'm out of office until Monday, will reply then.",
         },
         template="""Classify an inbound email received on a cold outreach thread.
 
@@ -279,7 +336,7 @@ Return only a JSON object: {"score": 0.0, "reason": "one sentence"}""",
         },
         template="""You are grading a cold email a job candidate is about to send. Be strict.
 
-Candidate profile (JSON) — the only allowed source of facts about the candidate:
+Candidate profile (JSON), the only allowed source of facts about the candidate:
 {{ candidate_profile }}
 
 Recipient: {{ contact_name }} at {{ startup_name }}

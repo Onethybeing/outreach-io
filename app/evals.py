@@ -138,7 +138,7 @@ def _safely(fn, *args) -> None:
     try:
         with SessionLocal() as db:
             fn(db, *args)
-    except Exception:  # noqa: BLE001 — evals are best-effort
+    except Exception:  # noqa: BLE001: evals are best-effort
         logger.exception("Eval job %s%r failed", fn.__name__, args)
 
 

@@ -34,7 +34,7 @@ export function CandidatesView({ initialRunId }: { initialRunId?: string }) {
   const columns = useMemo<ColumnDef<Candidate>[]>(() => {
     async function decide(candidate: Candidate, action: "approve" | "reject" | "reuse" | "update-contact") {
       const done = await run(`${candidate.id}:${action}`, () => post<CandidateDecision>(`/candidates/${candidate.id}/${action}`), (r) =>
-        r.status === "approved" || r.status === "updated" ? `${candidate.name} ${r.status} — checking they still work there` : `${candidate.name} ${r.status}`,
+        r.status === "approved" || r.status === "updated" ? `${candidate.name} ${r.status}. Checking they still work there` : `${candidate.name} ${r.status}`,
       )
       if (done) reload()
     }
@@ -48,7 +48,7 @@ export function CandidatesView({ initialRunId }: { initialRunId?: string }) {
             <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
               {c.name} <ExternalLinkIcon className="size-3" />
             </a>
-            <div className="text-xs text-muted-foreground">{c.title ?? "—"}</div>
+            <div className="text-xs text-muted-foreground">{c.title ?? "-"}</div>
           </div>
         ),
       },
@@ -57,7 +57,7 @@ export function CandidatesView({ initialRunId }: { initialRunId?: string }) {
         accessorKey: "reason",
         header: "Why",
         meta: { className: "min-w-64 max-w-md whitespace-normal" },
-        cell: ({ row }) => <span className="line-clamp-3 text-muted-foreground" title={row.original.reason ?? undefined}>{row.original.reason ?? "—"}</span>,
+        cell: ({ row }) => <span className="line-clamp-3 text-muted-foreground" title={row.original.reason ?? undefined}>{row.original.reason ?? "-"}</span>,
       },
       { accessorKey: "cv_filename", header: "CV" },
       {
@@ -132,7 +132,7 @@ export function CandidatesView({ initialRunId }: { initialRunId?: string }) {
     <>
       <PageHeader
         title="Candidates"
-        description="People the agent found. Approve the ones worth contacting — approving checks they still work there."
+        description="People the agent found. Approve the ones worth contacting. Approving checks they still work there."
       />
       <DataTable
         columns={columns}

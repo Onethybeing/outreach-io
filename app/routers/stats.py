@@ -58,5 +58,5 @@ def evaluate_draft(contact_id: uuid.UUID, db: Session = Depends(get_db), _: User
     except (llm.LLMError, prompts.PromptError, vault.VaultError) as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Evaluation failed: {exc}")
     if result is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "The draft changed while it was being evaluated — try again")
+        raise HTTPException(status.HTTP_409_CONFLICT, "The draft changed while it was being evaluated. Try again")
     return result

@@ -43,8 +43,8 @@ const BULK_PATHS: Record<BulkKind, string> = {
 }
 
 const NOTHING_ELIGIBLE: Record<BulkKind, string> = {
-  lookup: "No contacts need a lookup — they need verified employment and no email yet.",
-  drafts: "No contacts are ready for a draft — they need an email and no draft yet.",
+  lookup: "No contacts need a lookup. They need verified employment and no email yet.",
+  drafts: "No contacts are ready for a draft. They need an email and no draft yet.",
   send: "No approved drafts are waiting to be sent.",
 }
 
@@ -114,7 +114,7 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
           description: c.email
             ? "They already have an email address."
             : lookedUp
-              ? "They were already looked up — this spends another lookup."
+              ? "They were already looked up, so this spends another lookup."
               : "Their employment isn't verified, so the address may be for a job they've left.",
           confirmLabel: "Look up",
           onConfirm: go,
@@ -247,7 +247,7 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
             <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium hover:underline">
               {c.name} <ExternalLinkIcon className="size-3" />
             </a>
-            <div className="text-xs text-muted-foreground">{c.verified_title ?? c.title ?? "—"}</div>
+            <div className="text-xs text-muted-foreground">{c.verified_title ?? c.title ?? "-"}</div>
             {c.do_not_contact && <Badge variant="destructive">Do not contact</Badge>}
           </div>
         ),
@@ -416,7 +416,7 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
         error={contacts.error?.message}
         getRowId={(c) => c.id}
         search="Search contacts"
-        empty={view === "no_email" ? "Everyone has an email." : "No contacts here yet — approve candidates first."}
+        empty={view === "no_email" ? "Everyone has an email." : "No contacts here yet. Approve candidates first."}
         rowSelection={selection}
         onRowSelectionChange={setSelection}
         toolbar={

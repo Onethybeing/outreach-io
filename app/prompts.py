@@ -57,7 +57,7 @@ def render(node: str, template: str, variables: dict) -> str:
     values = {v: "" for v in contract.optional} | variables
     try:
         return _env.from_string(template).render(**values)
-    except Exception as exc:  # noqa: BLE001 — any render failure is a template problem to show the editor
+    except Exception as exc:  # noqa: BLE001: any render failure is a template problem to show the editor
         raise PromptError(f"Template failed to render: {exc}")
 
 
@@ -101,7 +101,7 @@ def _commit(db: Session, node: str) -> None:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise PromptError(f"Another change to {node} happened at the same time — reload and retry")
+        raise PromptError(f"Another change to {node} happened at the same time. Reload and retry")
 
 
 def create_version(

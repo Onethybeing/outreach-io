@@ -53,8 +53,8 @@ class EmailLookupStatus(str, enum.Enum):
     running = "running"
     found = "found"
     not_found = "not_found"  # provider answered: no email for this person
-    failed = "failed"  # couldn't ask (error, plan limit) — retryable
-    awaiting_user = "awaiting_user"  # needs a step from the user first (e.g. save/reveal in Apollo) — retryable, free
+    failed = "failed"  # couldn't ask (error, plan limit): retryable
+    awaiting_user = "awaiting_user"  # needs a step from the user first (e.g. save/reveal in Apollo): retryable, free
 
 
 class VerificationStatus(str, enum.Enum):
@@ -64,7 +64,7 @@ class VerificationStatus(str, enum.Enum):
     verified = "verified"  # profile's current company is the startup
     mismatch = "mismatch"  # profile's current company is a different company
     unconfirmed = "unconfirmed"  # profile shows no current company, or the match is too uncertain
-    failed = "failed"  # scrape/lookup error — retryable
+    failed = "failed"  # scrape/lookup error: retryable
 
 
 class DraftStatus(str, enum.Enum):
@@ -186,6 +186,10 @@ class Startup(Base):
     # The company's LinkedIn page, used to verify employment; looked up once (enriched_at set even if none found).
     linkedin_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     company_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What the company does, product, stage, recent news and sources: gathered once by
+    # research_startups so drafts can be specific. none_as_null: "not researched" must stay NULL.
+    brief: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    researched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     run: Mapped["Run"] = relationship(back_populates="startups")
@@ -206,6 +210,8 @@ class Contact(Base):
     title: Mapped[str | None] = mapped_column(String(256), nullable=True)
     linkedin_url: Mapped[str] = mapped_column(String(1024))
     company_at_scrape: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Why this person was worth contacting, carried over from the candidate the agent proposed.
+    outreach_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_duplicate_of_contact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("contacts.id"), nullable=True
@@ -234,7 +240,7 @@ class Contact(Base):
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     draft_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # A person changed the AI draft before approving — a quality signal for evals (PLAN.md §11).
+    # A person changed the AI draft before approving: a quality signal for evals (PLAN.md §11).
     draft_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     draft_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Langfuse trace of the generation
     # eval_draft_quality result. none_as_null: clearing it must store SQL NULL, not JSON 'null',
@@ -406,7 +412,7 @@ class RunEvent(Base):
 
 
 class ContactSuppression(Base):
-    """"Never contact this person" — outlives the contact row, so erasing can't undo an opt-out.
+    """"Never contact this person". Outlives the contact row, so erasing can't undo an opt-out.
 
     Only a hash of the LinkedIn URL is stored: enough to recognise them in a later run, not enough
     to identify them (app/suppression.py).

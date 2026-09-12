@@ -92,7 +92,7 @@ def _check_can_send(contact: Contact | None, force: bool) -> None:
     if contact.send_status == SendStatus.queued:
         raise ActionError(409, "This email is already being sent")
     if contact.send_status in SENT and not force:
-        raise ActionError(409, "Already sent — use force to send again")
+        raise ActionError(409, "Already sent. Use force to send again")
 
 
 def send(
@@ -107,14 +107,14 @@ def send(
     sender = sender_address(db)
     to_address, redirected = recipient(db, contact)
     if "@" not in to_address or to_address.endswith("@localhost"):
-        raise ActionError(400, "No sending address is configured — set DEV_REDIRECT_EMAIL, or add the Gmail credential to the vault")
+        raise ActionError(400, "No sending address is configured. Set DEV_REDIRECT_EMAIL, or add the Gmail credential to the vault")
     mode = "dev" if redirected else "prod"
     if expected_mode and expected_mode != mode:
-        raise ActionError(409, f"The sending mode is now '{mode}', not '{expected_mode}' — check who this would reach and try again")
+        raise ActionError(409, f"The sending mode is now '{mode}', not '{expected_mode}'. Check who this would reach and try again")
 
     # A previous attempt may have reached Gmail even though the response didn't reach us.
     if _already_sent(db, contact, user, redirected):
-        raise ActionError(409, "This email had already been sent — the earlier attempt did reach Gmail")
+        raise ActionError(409, "This email had already been sent. The earlier attempt did reach Gmail")
 
     rfc_message_id = make_msgid(domain=sender.split("@")[-1] or "localhost")
     contact.send_status, contact.rfc_message_id = SendStatus.queued, rfc_message_id
@@ -124,7 +124,7 @@ def send(
         message_id, thread_id = gmail.send_message(db, bytes(message))
         # Archived while still 'queued', so an erasure can't slip in and leave an orphan copy behind.
         _archive(contact_id, message)
-    except Exception as exc:  # noqa: BLE001 — never leave a contact stuck in 'queued'
+    except Exception as exc:  # noqa: BLE001: never leave a contact stuck in 'queued'
         logger.exception("Send for contact %s failed", contact_id)
         contact.send_status = SendStatus.failed
         audit.record(db, user, "emails.send_failed", "contact", contact.id, {"mode": mode, "error": str(exc)})
@@ -206,7 +206,7 @@ def execute_bulk(db: Session, contact_ids: list[uuid.UUID], user_id: uuid.UUID, 
                 logger.warning("Bulk send stopped: %s", exc)
                 break
             logger.warning("Bulk send for %s skipped: %s", contact_id, exc)
-        except Exception as exc:  # noqa: BLE001 — one bad contact must not stop the rest of the batch
+        except Exception as exc:  # noqa: BLE001: one bad contact must not stop the rest of the batch
             db.rollback()
             logger.warning("Bulk send for %s skipped: %s", contact_id, exc, exc_info=True)
 

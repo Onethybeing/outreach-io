@@ -35,7 +35,7 @@ def ensure_initial_admin(db: Session, settings: Settings) -> None:
     )
     if has_admin or not email:
         if not has_admin:
-            logger.warning("No active admin and INITIAL_ADMIN_EMAIL is empty — nobody can manage users")
+            logger.warning("No active admin and INITIAL_ADMIN_EMAIL is empty, so nobody can manage users")
         return
 
     user = db.scalar(select(User).where(func.lower(User.email) == email))
