@@ -231,7 +231,7 @@ Return only the JSON object.""",
     "generate_draft": NodeContract(
         description="Writes the personalized cold email to one contact.",
         required=("candidate_profile", "contact_name", "startup_name"),
-        optional=("contact_title", "startup_description", "startup_brief", "contact_reason", "sender_name"),
+        optional=("contact_title", "startup_description", "startup_brief", "contact_reason", "sender_name", "has_history"),
         sample={
             "candidate_profile": SAMPLE_PROFILE,
             "contact_name": "Jane Doe",
@@ -247,6 +247,7 @@ Return only the JSON object.""",
             ),
             "contact_reason": "Co-founder and CTO, owns engineering hiring at this size.",
             "sender_name": "Priya Sharma",
+            "has_history": "yes",
         },
         template="""Write a short email asking about work at a startup, from someone looking for their next role.
 
@@ -261,14 +262,18 @@ Researched notes on {{ startup_name }} (JSON, gathered from public sources):
 {{ startup_brief }}
 {% endif %}
 First, pick the evidence:
-- Go through `experience` and `projects` and choose the ONE item closest to what {{ startup_name }}
-  actually builds. Judge it on the work itself: the problem, the tech, the domain.
+{% if has_history %}- Go through `experience` and `projects` in the profile and choose the ONE item
+  closest to what {{ startup_name }} actually builds. Judge it on the work itself: the problem, the
+  tech, the domain.
 - Judge on relevance only. A job, an internship, a university or open-source project and a founder
   role all count equally, so pick an internship or a project over a founder role whenever it is the
   closer match. Never lead with a founder or business role just because it sounds more senior.
 - That item carries the email: name it, say what they built or did with it, and connect it to the
   recipient's work. Give it roughly half the body.
 - Then at most one supporting line: a second item, or 1-2 skills from the profile.
+{% else %}- The profile lists no separate roles or projects, so build the email from the skills and
+  domains it does list. Choose the two closest to what {{ startup_name }} builds and stay concrete.
+{% endif %}
 
 Then write it:
 - 90 to 150 words. Plain text, no markdown, no emojis, no em dashes (write full stops or commas).

@@ -119,7 +119,10 @@ def search_many(
                 try:
                     out[index] = future.result()
                     telemetry.count("tavily_searches")
-                except SearchError as exc:
-                    out[index] = exc
+                except Exception as exc:  # noqa: BLE001 — a malformed body raises ValueError, not
+                    # SearchError, and that must still cost one query rather than the whole batch.
+                    out[index] = exc if isinstance(exc, SearchError) else SearchError(
+                        f"Tavily returned something unreadable ({type(exc).__name__})"
+                    )
         obs.update(output={"found": [len(r) if isinstance(r, list) else 0 for r in out]})
     return out

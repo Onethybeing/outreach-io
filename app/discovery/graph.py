@@ -52,9 +52,13 @@ class RunFailed(Exception):
         self.node = node
 
 
-EXPERIENCE_KINDS = ("job", "internship", "freelance", "founder", "research", "volunteer")
+EXPERIENCE_KINDS = ("job", "internship", "freelance", "founder", "research", "volunteer", "project")
 MAX_EXPERIENCE = 8
 MAX_PROJECTS = 6
+
+
+def _dicts(value: Any, limit: int) -> list:
+    return [v for v in value[:limit] if isinstance(v, dict)] if isinstance(value, list) else []
 
 
 class ExperienceItem(BaseModel):
@@ -101,12 +105,15 @@ class CandidateProfile(BaseModel):
     def _string_list(cls, value: Any) -> list[str]:
         return [str(v).strip() for v in value if v and str(v).strip()] if isinstance(value, list) else []
 
-    @field_validator("experience", "projects", mode="before")
+    @field_validator("experience", mode="before")
     @classmethod
-    def _item_list(cls, value: Any) -> list:
-        if not isinstance(value, list):
-            return []
-        return [v for v in value[:MAX_EXPERIENCE] if isinstance(v, dict)]
+    def _experience_list(cls, value: Any) -> list:
+        return _dicts(value, MAX_EXPERIENCE)
+
+    @field_validator("projects", mode="before")
+    @classmethod
+    def _projects_list(cls, value: Any) -> list:
+        return _dicts(value, MAX_PROJECTS)
 
     @field_validator("years_experience", mode="before")
     @classmethod
@@ -246,7 +253,13 @@ def _previous_startups(ctx: RunContext) -> list[Startup]:
 def discover_startups(ctx: RunContext, state: State) -> NodeResult:
     results, seen_urls = [], set()
     # The queries are independent, so they run together: this is most of a run's search time.
-    for batch in tavily.search_many(ctx.db, state["queries"], RESULTS_PER_QUERY):
+    batches = tavily.search_many(ctx.db, state["queries"], RESULTS_PER_QUERY)
+    failures = [b for b in batches if isinstance(b, tavily.SearchError)]
+    if failures and len(failures) == len(batches):
+        # Every query failing is a bad key or an exhausted quota, not "nothing matched". Say so,
+        # instead of reporting an empty search as if the candidate had no options.
+        raise RunFailed(f"Search is not working: {failures[0]}", "discover_startups")
+    for batch in batches:
         if isinstance(batch, tavily.SearchError):
             ctx.emit("discover_startups", "warning", f"A search failed: {batch}")
             continue
@@ -424,6 +437,9 @@ def find_kdms(ctx: RunContext, state: State) -> NodeResult:
         ctx.db, [KDM_QUERY.format(name=s.name.replace('"', "")) for s in startups],
         KDM_SEARCH_RESULTS, include_domains=["linkedin.com/in"], content_chars=200,
     )
+    failures = [s for s in searches if isinstance(s, tavily.SearchError)]
+    if failures and len(failures) == len(searches):
+        raise RunFailed(f"Search is not working: {failures[0]}", "find_kdms")
     for startup, results in zip(startups, searches):
         if isinstance(results, tavily.SearchError):
             ctx.emit("find_kdms", "warning", f"Profile search failed for {startup.name}: {results}")

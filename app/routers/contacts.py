@@ -263,9 +263,11 @@ def read_settings(db: Session = Depends(get_db), _: User = Depends(require("dash
 
 
 @settings_router.get("/health")
-def settings_health(db: Session = Depends(get_db), _: User = Depends(require("vault.manage"))) -> dict:
-    """Admin-only: the checks call each provider, and the results name what is configured."""
-    return run_checks(db)
+def settings_health(
+    fresh: bool = False, db: Session = Depends(get_db), _: User = Depends(require("vault.manage"))
+) -> dict:
+    """Admin-only: the checks call each provider, so the result is cached for a minute."""
+    return run_checks(db, fresh=fresh)
 
 
 @settings_router.put("/mode", response_model=SettingsOut)

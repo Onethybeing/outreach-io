@@ -9,7 +9,9 @@ on:
 
 concurrency:
   group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded pull-request runs are worth cancelling; a main run is the one result you want kept,
+  # and two merges close together would otherwise leave main with no completed run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
@@ -28,10 +30,6 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/outreach_io
-      # Bootstrap secrets the app refuses to start without. Throwaway values: this key encrypts
-      # nothing but the fake credentials the tests create, and the database is destroyed with the job.
-      VAULT_MASTER_KEY: wYSaoqPYQehPz_ele75ZKJq3H32qwDOjgwmBJ_Q4ue8=
-      SESSION_SECRET: github-actions-test-secret
       APP_MODE: dev
       STORAGE_BACKEND: local
     steps:
@@ -41,6 +39,12 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      # Generated per run, never committed: a real key in the repo is one copy-paste away from
+      # being used somewhere it would matter.
+      - name: Generate throwaway bootstrap secrets
+        run: |
+          python -c "from cryptography.fernet import Fernet; print('VAULT_MASTER_KEY=' + Fernet.generate_key().decode())" >> "$GITHUB_ENV"
+          python -c "import secrets; print('SESSION_SECRET=' + secrets.token_urlsafe(32))" >> "$GITHUB_ENV"
       - run: alembic upgrade head
       # Serial on purpose: some fixtures clear shared tables (the vault, for one) and commit, so
       # parallel workers would pull the rows out from under each other.
