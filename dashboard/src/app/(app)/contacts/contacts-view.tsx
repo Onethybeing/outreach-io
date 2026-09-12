@@ -66,7 +66,6 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
   const contacts = useApi<Contact[]>(`/contacts${query({ view, resume_id: resumeId === "all" ? null : resumeId })}`)
   const { run, isPending } = useAction()
   const reload = contacts.reload
-  const mode = settings.app_mode
 
   // Verification, lookups and bulk jobs run in the background on the server; poll while any are going.
   const anyBusy = contacts.data?.some(isBusy) ?? false
@@ -159,14 +158,14 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
         const again = SENT.includes(c.send_status)
         ask({
           title: again ? `Email ${c.name} again?` : `Send the email to ${c.name}?`,
-          description: sendWarning(mode, c.email),
+          description: sendWarning(settings, c.email),
           confirmLabel: again ? "Send again" : "Send",
-          destructive: mode === "prod",
+          destructive: settings.app_mode === "prod",
           onConfirm: () => act(c, "send", () => post<Contact>(`/contacts/${c.id}/send${again ? "?force=true" : ""}`), sendSuccess),
         })
       },
     }
-  }, [run, reload, ask, watchForAWhile, mode])
+  }, [run, reload, ask, watchForAWhile, settings])
 
   const columns = useMemo<ColumnDef<Contact>[]>(() => {
     const pending = (c: Contact, key: string) => isPending(`${c.id}:${key}`)
@@ -373,7 +372,7 @@ export function ContactsView({ initialView, initialResumeId }: { initialView: Co
     const copy = {
       lookup: { title: `Find emails for ${n} contact${n === 1 ? "" : "s"}?`, description: `${scope} will be looked up with ${humanize(preview.provider ?? settings.email_provider)}, in the background.`, confirmLabel: "Find emails" },
       drafts: { title: `Write ${n} draft${n === 1 ? "" : "s"}?`, description: `${scope}. You'll still review and approve each draft before anything is sent.`, confirmLabel: "Write drafts" },
-      send: { title: `Send ${n} approved email${n === 1 ? "" : "s"}?`, description: `${scope}. ${sendWarning(mode)}`, confirmLabel: "Send all", destructive: mode === "prod" },
+      send: { title: `Send ${n} approved email${n === 1 ? "" : "s"}?`, description: `${scope}. ${sendWarning(settings)}`, confirmLabel: "Send all", destructive: settings.app_mode === "prod" },
     }[kind]
     ask({
       ...copy,

@@ -303,8 +303,14 @@ class BulkLookupOut(BaseModel):
 
 class SettingsOut(BaseModel):
     app_mode: str
+    # Where dev-mode email actually goes; None in prod, where it goes to the contacts themselves.
+    dev_redirect_email: str | None = None
     email_provider: str
     email_providers: list[str]
+
+
+class AppModeIn(BaseModel):
+    mode: str = Field(pattern="^(dev|prod)$")
 
 
 class EmailProviderIn(BaseModel):

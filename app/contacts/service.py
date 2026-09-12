@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, evals, suppression
+from app.config import get_settings
 from app.contacts import apollo
 from app.db import SessionLocal
 from app.jobs import WorkerPool
@@ -175,6 +176,31 @@ def _contact(db: Session, contact_id: uuid.UUID, lock: bool = False) -> Contact:
     if contact is None:
         raise ActionError(404, "Contact not found")
     return contact
+
+
+APP_MODES = ("dev", "prod")
+
+
+def app_mode(db: Session) -> str:
+    """Runtime sending mode. Admins toggle it in Settings; APP_MODE only sets the starting value."""
+    setting = db.get(AppSetting, "app_mode")
+    if setting and setting.value in APP_MODES:
+        return setting.value
+    return get_settings().app_mode if get_settings().app_mode in APP_MODES else "dev"
+
+
+def set_app_mode(db: Session, mode: str, user: User) -> str:
+    if mode not in APP_MODES:
+        raise ActionError(400, f"Unknown mode '{mode}'. Available: {', '.join(APP_MODES)}")
+    setting = db.get(AppSetting, "app_mode")
+    if setting is None:
+        db.add(AppSetting(key="app_mode", value=mode))
+    else:
+        setting.value = mode
+    # Deliberately loud in the audit log: this is what decides whether strangers receive email.
+    audit.record(db, user, "settings.app_mode", "setting", "app_mode", {"value": mode})
+    db.commit()
+    return mode
 
 
 def email_provider(db: Session) -> str:

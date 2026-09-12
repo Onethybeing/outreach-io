@@ -5,14 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import require
-from app.config import get_settings
 from app.contacts import drafts, sending, service, verification
 from app.db import get_db
 from app.models import Contact, EmailDirection, EmailEvent, Resume, Startup, User
 from app.schemas import (
-    BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn, BulkLookupOut,
-    CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut, EmailProviderIn,
-    ManualEmailIn, SettingsOut,
+    AppModeIn, BulkActionIn, BulkActionOut, BulkDecisionIn, BulkDecisionResult, BulkLookupIn,
+    BulkLookupOut, CandidateDecisionOut, ContactOut, DoNotContactIn, DraftEditIn, EmailEventOut,
+    EmailProviderIn, ManualEmailIn, SettingsOut,
 )
 
 candidates_router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -248,11 +247,20 @@ def list_emails(contact_id: uuid.UUID, db: Session = Depends(get_db), _: User = 
 
 @settings_router.get("", response_model=SettingsOut)
 def read_settings(db: Session = Depends(get_db), _: User = Depends(require("dashboard.view"))):
+    mode = service.app_mode(db)
     return SettingsOut(
-        app_mode=get_settings().app_mode,
+        app_mode=mode,
+        dev_redirect_email=sending.dev_redirect_address(db) if mode == "dev" else None,
         email_provider=service.email_provider(db),
         email_providers=sorted(service.EMAIL_PROVIDERS),
     )
+
+
+@settings_router.put("/mode", response_model=SettingsOut)
+def change_mode(body: AppModeIn, db: Session = Depends(get_db), user: User = Depends(require("mode.toggle"))):
+    """dev redirects every email to the operator's own inbox; prod sends to the contacts themselves."""
+    service.set_app_mode(db, body.mode, user)
+    return read_settings(db, user)
 
 
 @settings_router.put("/email-provider", response_model=SettingsOut)

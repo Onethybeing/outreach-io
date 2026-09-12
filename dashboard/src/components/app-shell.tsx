@@ -105,7 +105,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 md:px-6">
-            <ModeBadge mode={session.settings.app_mode} />
+            <ModeBadge settings={session.settings} />
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">
                 {session.me.name ?? session.me.email} · {session.me.role}
@@ -123,13 +123,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   )
 }
 
-function ModeBadge({ mode }: { mode: string }) {
-  if (mode === "prod") {
-    return <Badge variant="destructive">Production mode — emails go to real inboxes</Badge>
+function ModeBadge({ settings }: { settings: AppSettings }) {
+  if (settings.app_mode === "prod") {
+    return <Badge variant="destructive">Production mode — emails go to the real contacts</Badge>
   }
   return (
     <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-      Dev mode — emails are saved as files, nothing is sent
+      Dev mode — every email goes to {settings.dev_redirect_email ?? "your own inbox"}
     </Badge>
   )
 }

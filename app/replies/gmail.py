@@ -129,3 +129,27 @@ def parse_message(raw: dict) -> GmailMessage:
 
 def get_message(db: Session, message_id: str) -> GmailMessage:
     return parse_message(_get(db, f"/messages/{message_id}", {"format": "full"}))
+
+
+def send_message(db: Session, raw_message: bytes) -> tuple[str, str]:
+    """Send a built MIME message. Returns (gmail message id, thread id)."""
+    payload = {"raw": base64.urlsafe_b64encode(raw_message).decode()}
+    for attempt in range(2):
+        telemetry.heartbeat()
+        try:
+            response = httpx.post(
+                f"{API}/messages/send",
+                headers={"Authorization": f"Bearer {_access_token(db, force_refresh=attempt > 0)}"},
+                json=payload, timeout=60,
+            )
+        except httpx.HTTPError as exc:
+            raise GmailError(f"Could not reach Gmail: {type(exc).__name__}")
+        if response.status_code == 401 and attempt == 0:
+            continue  # token expired early; refresh once
+        if response.status_code == 403:
+            raise GmailAuthError("Gmail refused the send — the token is missing the gmail.send scope")
+        if response.status_code not in (200, 201):
+            raise GmailError(f"Gmail refused the send (HTTP {response.status_code}): {response.text[:200]}")
+        body = response.json()
+        return body["id"], body.get("threadId", "")
+    raise GmailAuthError("Gmail kept rejecting the access token — sign in again with scripts/gmail_auth.py")
